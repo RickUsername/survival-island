@@ -1,6 +1,7 @@
 {
-  "short_name": "React App",
-  "name": "Create React App Sample",
+  "short_name": "Survival Island",
+  "name": "Survival Island - 2D Survival Tamagotchi",
+  "description": "Manage eine gestrandete Figur auf einer einsamen Insel. Sammle Ressourcen, baue Unterstände und überlebe!",
   "icons": [
     {
       "src": "favicon.ico",
@@ -20,6 +21,8 @@
   ],
   "start_url": ".",
   "display": "standalone",
-  "theme_color": "#000000",
-  "background_color": "#ffffff"
+  "orientation": "landscape",
+  "theme_color": "#0a0a1a",
+  "background_color": "#0a0a1a",
+  "categories": ["games", "entertainment"]
 }
