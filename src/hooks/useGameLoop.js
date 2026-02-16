@@ -11,7 +11,96 @@ import { SAVE_INTERVAL, TILE_SIZE, COLLISION_TILES, MAP_COLS, MAP_ROWS } from '.
 import { updateAnimals, updateAnimalHunger, checkTreeFruitDrop, checkTreeSeedDrop } from '../systems/AnimalSystem';
 import homeMap, { EXIT_ZONES, TREE_POSITION } from '../data/homeMap';
 import items from '../data/items';
-import { FOOD_SPOIL_TIME } from '../utils/constants';
+import { FOOD_SPOIL_TIME, TILE_TYPES } from '../utils/constants';
+
+// --- Unkraut-Konstanten ---
+const WEED_SPAWN_INTERVAL = 8 * 60 * 60 * 1000; // Alle 8 Stunden
+const WEED_SPAWN_COUNT = 2; // 2 neue Unkräuter pro Spawn
+const WEED_GROWTH_TIME = 8 * 60 * 60 * 1000; // 8 Stunden pro Wachstumsstufe
+
+// Hilfsfunktion: Freie Gras-Tiles finden
+function getFreeTiles(placedBuildings, plantedTrees) {
+  const freeTiles = [];
+  for (let row = 0; row < MAP_ROWS; row++) {
+    for (let col = 0; col < MAP_COLS; col++) {
+      if (homeMap[row][col] !== TILE_TYPES.GRASS) continue;
+      if (placedBuildings?.some(b => b.col === col && b.row === row)) continue;
+      if (plantedTrees?.some(t => t.col === col && t.row === row)) continue;
+      if (col === TREE_POSITION.col && row === TREE_POSITION.row) continue;
+      freeTiles.push({ col, row });
+    }
+  }
+  return freeTiles;
+}
+
+// Unkraut spawnen: Bevorzugt neben bestehendem Unkraut
+function spawnWeeds(existingWeeds, placedBuildings, plantedTrees) {
+  const newWeeds = [...existingWeeds];
+  let spawned = 0;
+
+  const freeTiles = getFreeTiles(placedBuildings, plantedTrees);
+
+  while (spawned < WEED_SPAWN_COUNT && freeTiles.length > 0) {
+    let chosenIdx;
+
+    // 70% Chance: Neben bestehendem Unkraut spawnen (wenn vorhanden)
+    if (newWeeds.length > 0 && Math.random() < 0.7) {
+      // Zufaelliges bestehendes Unkraut waehlen
+      const sourceWeed = newWeeds[Math.floor(Math.random() * newWeeds.length)];
+      // Nachbar-Tiles finden (8 Richtungen)
+      const neighborIdxs = [];
+      for (let i = 0; i < freeTiles.length; i++) {
+        const t = freeTiles[i];
+        const dc = Math.abs(t.col - sourceWeed.col);
+        const dr = Math.abs(t.row - sourceWeed.row);
+        if (dc <= 1 && dr <= 1 && (dc + dr > 0)) {
+          neighborIdxs.push(i);
+        }
+      }
+      if (neighborIdxs.length > 0) {
+        chosenIdx = neighborIdxs[Math.floor(Math.random() * neighborIdxs.length)];
+      } else {
+        // Kein freier Nachbar, zufaellig waehlen
+        chosenIdx = Math.floor(Math.random() * freeTiles.length);
+      }
+    } else {
+      chosenIdx = Math.floor(Math.random() * freeTiles.length);
+    }
+
+    const tile = freeTiles[chosenIdx];
+    const existingIdx = newWeeds.findIndex(w => w.col === tile.col && w.row === tile.row);
+    if (existingIdx >= 0) {
+      if (newWeeds[existingIdx].stage < 3) {
+        newWeeds[existingIdx] = { ...newWeeds[existingIdx], stage: newWeeds[existingIdx].stage + 1 };
+      }
+    } else {
+      newWeeds.push({
+        col: tile.col,
+        row: tile.row,
+        stage: 1,
+        spawnedAt: Date.now(),
+      });
+    }
+    freeTiles.splice(chosenIdx, 1);
+    spawned++;
+  }
+
+  return newWeeds;
+}
+
+// Unkraut wachsen lassen (natürliches Wachstum über Zeit)
+function growWeeds(weeds) {
+  const now = Date.now();
+  return weeds.map(w => {
+    if (w.stage >= 3) return w;
+    const elapsed = now - w.spawnedAt;
+    const newStage = Math.min(3, 1 + Math.floor(elapsed / WEED_GROWTH_TIME));
+    if (newStage !== w.stage) {
+      return { ...w, stage: newStage };
+    }
+    return w;
+  });
+}
 
 export default function useGameLoop() {
   const [gameState, setGameState] = useState(null);
@@ -95,6 +184,24 @@ export default function useGameLoop() {
           amount: state.inventory.fruit.amount + fruitDrop,
         };
         state.lastFruitDrop = Date.now();
+      }
+    }
+
+    // Offline Unkraut-Spawn nachholen
+    if (!state.vacation.isActive) {
+      const lastWeedSpawn = state.lastWeedSpawn || state.stats?.startedAt || Date.now();
+      const weedMissed = Math.floor((Date.now() - lastWeedSpawn) / WEED_SPAWN_INTERVAL);
+      if (weedMissed > 0) {
+        let weeds = state.weeds || [];
+        for (let i = 0; i < Math.min(weedMissed, 20); i++) { // max 20 Spawns nachholen
+          weeds = spawnWeeds(weeds, state.placedBuildings, state.plantedTrees);
+        }
+        state.weeds = weeds;
+        state.lastWeedSpawn = Date.now();
+      }
+      // Unkraut wachsen lassen
+      if (state.weeds && state.weeds.length > 0) {
+        state.weeds = growWeeds(state.weeds);
       }
     }
 
@@ -185,6 +292,24 @@ export default function useGameLoop() {
         if (seedDrop) {
           updated.droppedSeeds = [...(updated.droppedSeeds || []), seedDrop];
           updated.lastSeedDrop = now;
+        }
+
+        // Unkraut-Spawning prüfen (alle 8 Stunden)
+        const lastWeedSpawn = updated.lastWeedSpawn || updated.stats?.startedAt || now;
+        if (now - lastWeedSpawn >= WEED_SPAWN_INTERVAL) {
+          // Anzahl verpasster Spawns berechnen
+          const missedSpawns = Math.floor((now - lastWeedSpawn) / WEED_SPAWN_INTERVAL);
+          let weeds = updated.weeds || [];
+          for (let i = 0; i < missedSpawns; i++) {
+            weeds = spawnWeeds(weeds, updated.placedBuildings, updated.plantedTrees);
+          }
+          updated.weeds = weeds;
+          updated.lastWeedSpawn = now;
+        }
+
+        // Unkraut natürlich wachsen lassen
+        if (updated.weeds && updated.weeds.length > 0) {
+          updated.weeds = growWeeds(updated.weeds);
         }
 
         return updated;

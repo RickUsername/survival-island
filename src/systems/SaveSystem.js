@@ -75,6 +75,11 @@ export function getDefaultGameState() {
     // Gepflanzte Bäume: [{ id, col, row, plantedAt }]
     plantedTrees: [],
 
+    // Unkraut auf der Karte: [{ col, row, stage: 1-3, spawnedAt }]
+    weeds: [],
+    // Letzter Unkraut-Spawn
+    lastWeedSpawn: null,
+
     // Statistiken
     stats: {
       daysAlive: 0,
@@ -148,6 +153,10 @@ export function loadGame() {
     if (!gameState.droppedSeeds) gameState.droppedSeeds = [];
     if (gameState.lastSeedDrop === undefined) gameState.lastSeedDrop = null;
     if (!gameState.plantedTrees) gameState.plantedTrees = [];
+
+    // Migration: Unkraut-System ergänzen
+    if (!gameState.weeds) gameState.weeds = [];
+    if (gameState.lastWeedSpawn === undefined) gameState.lastWeedSpawn = null;
 
     // Migration: Tier-Hunger ergänzen (alte Tiere ohne hunger-Feld)
     if (gameState.animals && gameState.animals.length > 0) {

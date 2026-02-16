@@ -14,22 +14,41 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
   const canvasRef = useRef(null);
   const animFrame = useRef(null);
 
-  // Kamera-Offset berechnen (Spieler zentriert)
+  // Skalierung berechnen damit Map den Viewport ausfüllt
+  const getScale = useCallback(() => {
+    const scaleX = canvasSize.width / MAP_WIDTH;
+    const scaleY = canvasSize.height / MAP_HEIGHT;
+    return Math.max(scaleX, scaleY); // cover (Map füllt Viewport komplett)
+  }, [canvasSize]);
+
+  // Kamera-Offset berechnen (Spieler zentriert, skaliert)
   const getCameraOffset = useCallback(() => {
     if (!gameState) return { x: 0, y: 0 };
 
+    const scale = getScale();
     const cw = canvasSize.width;
     const ch = canvasSize.height;
+    const scaledMapW = MAP_WIDTH * scale;
+    const scaledMapH = MAP_HEIGHT * scale;
 
-    let offsetX = cw / 2 - gameState.player.x;
-    let offsetY = ch / 2 - gameState.player.y;
+    let offsetX = cw / 2 - gameState.player.x * scale;
+    let offsetY = ch / 2 - gameState.player.y * scale;
 
-    // Kamera an Kartenränder klemmen
-    offsetX = Math.min(0, Math.max(cw - MAP_WIDTH, offsetX));
-    offsetY = Math.min(0, Math.max(ch - MAP_HEIGHT, offsetY));
+    // Wenn skalierte Map größer als Viewport → an Ränder klemmen
+    // Wenn skalierte Map kleiner als Viewport → zentrieren
+    if (scaledMapW >= cw) {
+      offsetX = Math.min(0, Math.max(cw - scaledMapW, offsetX));
+    } else {
+      offsetX = (cw - scaledMapW) / 2;
+    }
+    if (scaledMapH >= ch) {
+      offsetY = Math.min(0, Math.max(ch - scaledMapH, offsetY));
+    } else {
+      offsetY = (ch - scaledMapH) / 2;
+    }
 
     return { x: offsetX, y: offsetY };
-  }, [gameState, canvasSize]);
+  }, [gameState, canvasSize, getScale]);
 
   // Kachel zeichnen
   const drawTile = useCallback((ctx, col, row, tileType, camera) => {
@@ -395,14 +414,14 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
     const cx = tx + TILE_SIZE / 2;  // Mitte der Tile
     const cy = ty + TILE_SIZE;       // Basis unten
 
-    // Skalierung: Stufe 1 = 0.25×, Stufe 10 = 1.0× (also 4× Wachstum)
-    const scale = 0.25 + (stage - 1) * (0.75 / 9);
+    // Skalierung: Stufe 1 = 0.2×, Stufe 10 = 1.0× (also 5× Wachstum)
+    const scale = 0.2 + (stage - 1) * (0.8 / 9);
 
-    // Stammhöhe und -breite skaliert (3× Basisgröße)
-    const trunkH = 90 * scale;
-    const trunkW = Math.max(6, 30 * scale);
-    const crownR = Math.max(10, 66 * scale);
-    const crownR2 = Math.max(8, 48 * scale);
+    // Stammhöhe und -breite skaliert (mächtiger Baum bei Stufe 10: ~4 Tiles hoch)
+    const trunkH = 150 * scale;
+    const trunkW = Math.max(6, 45 * scale);
+    const crownR = Math.max(10, 100 * scale);
+    const crownR2 = Math.max(8, 72 * scale);
 
     // Schatten
     ctx.fillStyle = 'rgba(0,0,0,0.15)';
@@ -929,6 +948,124 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
     }
   }, [gameState]);
 
+  // Unkraut auf der Karte zeichnen (3 Stufen)
+  const drawWeeds = useCallback((ctx, camera) => {
+    if (!gameState?.weeds || gameState.weeds.length === 0) return;
+
+    for (const weed of gameState.weeds) {
+      const wx = weed.col * TILE_SIZE + camera.x;
+      const wy = weed.row * TILE_SIZE + camera.y;
+      const cx = wx + TILE_SIZE / 2;
+      const cy = wy + TILE_SIZE / 2;
+
+      const time = Date.now() / 2000;
+      const sway = Math.sin(time + weed.col * 2 + weed.row * 3) * 1.5;
+
+      switch (weed.stage) {
+        case 1: {
+          // Stufe 1: Kleine Keimlinge (sichtbare gruene Sproesslinge)
+          // Dunkleres Gruen damit es sich vom Gras abhebt
+          ctx.strokeStyle = '#3D6B0F';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.moveTo(cx - 7, cy + 12);
+          ctx.quadraticCurveTo(cx - 6 + sway * 0.5, cy + 4, cx - 5 + sway, cy - 4);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(cx + 5, cy + 12);
+          ctx.quadraticCurveTo(cx + 4 + sway * 0.5, cy + 4, cx + 6 + sway, cy - 2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(cx - 1, cy + 12);
+          ctx.quadraticCurveTo(cx + sway * 0.3, cy + 4, cx + sway * 0.5, cy);
+          ctx.stroke();
+          // Kleine Blaettchen an den Spitzen
+          ctx.fillStyle = '#4A8C1B';
+          ctx.beginPath();
+          ctx.ellipse(cx - 5 + sway, cy - 5, 3, 2, -0.4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.ellipse(cx + 6 + sway, cy - 3, 3, 2, 0.4, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+        case 2: {
+          // Stufe 2: Mittelgroßes gruenes Unkraut (dickere Halme, Blaetter)
+          ctx.strokeStyle = '#556B2F';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(cx - 4, cy + 12);
+          ctx.quadraticCurveTo(cx - 3 + sway * 0.5, cy + 2, cx - 6 + sway, cy - 8);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(cx + 4, cy + 12);
+          ctx.quadraticCurveTo(cx + 3 + sway * 0.5, cy, cx + 7 + sway, cy - 6);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(cx, cy + 12);
+          ctx.quadraticCurveTo(cx + sway * 0.3, cy + 2, cx + sway * 0.5, cy - 4);
+          ctx.stroke();
+          // Gruene Blaetter
+          ctx.fillStyle = '#7CBA3E';
+          ctx.beginPath();
+          ctx.ellipse(cx - 6 + sway, cy - 9, 5, 3, -0.3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.ellipse(cx + 7 + sway, cy - 7, 5, 3, 0.3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#8ED450';
+          ctx.beginPath();
+          ctx.ellipse(cx + sway * 0.5, cy - 5, 4, 2.5, 0, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+        case 3:
+        default: {
+          // Stufe 3: Goldenes Heu (voll ausgewachsen, deutlich anders als Stufe 2)
+          // Basis: bueschel aus goldenen Halmen
+          ctx.strokeStyle = '#C4A035';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(cx - 8, cy + 16);
+          ctx.quadraticCurveTo(cx - 6 + sway, cy - 2, cx - 12 + sway * 2, cy - 18);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(cx - 2, cy + 16);
+          ctx.quadraticCurveTo(cx - 1 + sway * 0.5, cy - 4, cx - 3 + sway, cy - 22);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(cx + 4, cy + 16);
+          ctx.quadraticCurveTo(cx + 3 + sway * 0.8, cy - 2, cx + 2 + sway, cy - 20);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(cx + 10, cy + 16);
+          ctx.quadraticCurveTo(cx + 8 + sway, cy, cx + 14 + sway * 2, cy - 16);
+          ctx.stroke();
+          // Dicke goldene Aehren oben
+          ctx.fillStyle = '#DAB94E';
+          ctx.beginPath();
+          ctx.ellipse(cx - 12 + sway * 2, cy - 20, 4, 7, -0.3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.ellipse(cx - 3 + sway, cy - 24, 4, 7, 0.1, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.ellipse(cx + 2 + sway, cy - 22, 4, 7, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.ellipse(cx + 14 + sway * 2, cy - 18, 4, 6, 0.3, 0, Math.PI * 2);
+          ctx.fill();
+          // Goldener Schimmer
+          ctx.fillStyle = 'rgba(255, 215, 0, 0.2)';
+          ctx.beginPath();
+          ctx.ellipse(cx + sway, cy - 6, 18, 20, 0, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+      }
+    }
+  }, [gameState]);
+
   // Gepflanzte Bäume zeichnen (wachsen über Zeit)
   const drawPlantedTrees = useCallback((ctx, camera) => {
     if (!gameState?.plantedTrees || gameState.plantedTrees.length === 0) return;
@@ -1082,45 +1219,57 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
       canvas.height = canvasSize.height;
 
       const camera = getCameraOffset();
+      const scale = getScale();
 
       // Hintergrund
       ctx.fillStyle = '#1a1a2e';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Kacheln zeichnen
+      // Skalierung anwenden
+      ctx.save();
+      ctx.translate(camera.x, camera.y);
+      ctx.scale(scale, scale);
+
+      // Kacheln zeichnen (ohne Kamera-Offset, da bereits via transform)
+      const zeroCamera = { x: 0, y: 0 };
       for (let row = 0; row < MAP_ROWS; row++) {
         for (let col = 0; col < MAP_COLS; col++) {
-          drawTile(ctx, col, row, homeMap[row][col], camera);
+          drawTile(ctx, col, row, homeMap[row][col], zeroCamera);
         }
       }
 
       // Gebäude
-      drawBuildings(ctx, camera);
+      drawBuildings(ctx, zeroCamera);
 
       // Wachsender Baum
-      drawGrowingTree(ctx, camera);
+      drawGrowingTree(ctx, zeroCamera);
 
       // Abgeworfene Samen
-      drawDroppedSeeds(ctx, camera);
+      drawDroppedSeeds(ctx, zeroCamera);
+
+      // Unkraut
+      drawWeeds(ctx, zeroCamera);
 
       // Gepflanzte Bäume
-      drawPlantedTrees(ctx, camera);
+      drawPlantedTrees(ctx, zeroCamera);
 
       // Tiere
-      drawAnimals(ctx, camera);
+      drawAnimals(ctx, zeroCamera);
 
       // Ghost-Vorschau (Platzierungsmodus)
-      drawPlacementGhost(ctx, camera);
+      drawPlacementGhost(ctx, zeroCamera);
 
       // Spieler (nur wenn nicht auf Sammelreise)
       if (!gameState.gathering) {
-        drawPlayer(ctx, camera);
+        drawPlayer(ctx, zeroCamera);
       }
 
       // Ausgangs-Markierungen
-      drawExitMarkers(ctx, camera);
+      drawExitMarkers(ctx, zeroCamera);
 
-      // Wetter-Overlay
+      ctx.restore();
+
+      // Wetter-Overlay (nicht skaliert, läuft über ganzen Viewport)
       drawWeather(ctx, canvas.width, canvas.height);
 
       animFrame.current = requestAnimationFrame(render);
@@ -1133,7 +1282,16 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
         cancelAnimationFrame(animFrame.current);
       }
     };
-  }, [gameState, canvasSize, placementGhost, getCameraOffset, drawTile, drawPlayer, drawBuildings, drawGrowingTree, drawDroppedSeeds, drawPlantedTrees, drawAnimals, drawPlacementGhost, drawWeather, drawExitMarkers]);
+  }, [gameState, canvasSize, placementGhost, getCameraOffset, getScale, drawTile, drawPlayer, drawBuildings, drawGrowingTree, drawDroppedSeeds, drawWeeds, drawPlantedTrees, drawAnimals, drawPlacementGhost, drawWeather, drawExitMarkers]);
+
+  // Screen-Koordinaten → Welt-Koordinaten (mit Skalierung)
+  const screenToWorld = useCallback((screenX, screenY) => {
+    const camera = getCameraOffset();
+    const scale = getScale();
+    const worldX = (screenX - camera.x) / scale;
+    const worldY = (screenY - camera.y) / scale;
+    return { worldX, worldY };
+  }, [getCameraOffset, getScale]);
 
   // Klick-Handler
   const handleClick = useCallback((e) => {
@@ -1144,14 +1302,12 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
 
-    const camera = getCameraOffset();
-    const worldX = clickX - camera.x;
-    const worldY = clickY - camera.y;
+    const { worldX, worldY } = screenToWorld(clickX, clickY);
 
     if (onMapClick) {
       onMapClick(worldX, worldY);
     }
-  }, [gameState, getCameraOffset, onMapClick]);
+  }, [gameState, screenToWorld, onMapClick]);
 
   // Maus-Bewegung (für Ghost-Vorschau im Platzierungsmodus)
   const handleMouseMove = useCallback((e) => {
@@ -1164,17 +1320,14 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
-    const camera = getCameraOffset();
-    const worldX = mouseX - camera.x;
-    const worldY = mouseY - camera.y;
-
+    const { worldX, worldY } = screenToWorld(mouseX, mouseY);
     const col = Math.floor(worldX / TILE_SIZE);
     const row = Math.floor(worldY / TILE_SIZE);
 
     if (col >= 0 && col < MAP_COLS && row >= 0 && row < MAP_ROWS) {
       onMouseMove(col, row);
     }
-  }, [onMouseMove, getCameraOffset]);
+  }, [onMouseMove, screenToWorld]);
 
   return (
     <canvas

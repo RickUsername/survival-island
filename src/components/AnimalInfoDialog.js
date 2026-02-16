@@ -26,9 +26,11 @@ export default function AnimalInfoDialog({ animal, inventory, onFeed, onDismiss,
   // Verfügbares Futter zählen
   const fruitCount = inventory?.fruit?.amount || 0;
   const berryCount = inventory?.berry?.amount || 0;
+  const hayCount = inventory?.hay?.amount || 0;
   const hasFruit = fruitCount > 0;
   const hasBerry = berryCount > 0;
-  const canFeed = hasFruit || hasBerry;
+  const hasHay = hayCount > 0;
+  const canFeed = hasFruit || hasBerry || hasHay;
 
   // Tage seit Spawn
   const daysSinceSpawn = Math.floor((Date.now() - (animal.spawnedAt || Date.now())) / (24 * 60 * 60 * 1000));
@@ -109,6 +111,19 @@ export default function AnimalInfoDialog({ animal, inventory, onFeed, onDismiss,
               <span style={styles.feedIcon}>🫐</span>
               <span>Beere ({berryCount})</span>
               <span style={styles.feedValue}>+50%</span>
+            </button>
+            <button
+              style={{
+                ...styles.feedBtn,
+                opacity: hasHay ? 1 : 0.4,
+                cursor: hasHay ? 'pointer' : 'default',
+              }}
+              onClick={() => hasHay && onFeed('hay')}
+              disabled={!hasHay}
+            >
+              <span style={styles.feedIcon}>🌾</span>
+              <span>Heu ({hayCount})</span>
+              <span style={styles.feedValue}>+30%</span>
             </button>
           </div>
           {!canFeed && (

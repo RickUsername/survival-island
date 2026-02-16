@@ -274,6 +274,16 @@ const items = {
     description: 'Die beste Spitzhacke. Extrem langlebig.',
   },
 
+  // --- Materialien ---
+  hay: {
+    id: 'hay',
+    name: 'Heu',
+    category: 'resource',
+    color: '#D4A843',
+    description: 'Getrocknetes Gras. Nützlich als Tierfutter oder Material.',
+    fruitValue: 0.3, // Futterwert für Tiere: 30% eines Obstes
+  },
+
   // --- Samen ---
   tree_seed: {
     id: 'tree_seed',

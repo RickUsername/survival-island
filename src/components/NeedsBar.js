@@ -11,8 +11,32 @@ const needConfig = {
   mood: { label: 'Stimmung', color: '#e91e63', icon: '😊' },
 };
 
-export default function NeedsBar({ needs }) {
+export default function NeedsBar({ needs, compact }) {
   if (!needs) return null;
+
+  // Kompakter Modus: Nur Icons mit farbigem Punkt
+  if (compact) {
+    return (
+      <div style={styles.compactContainer}>
+        {Object.entries(needConfig).map(([key, config]) => {
+          const value = needs[key];
+          const critical = isNeedCritical(value);
+          return (
+            <div key={key} style={styles.compactItem}>
+              <span style={{ fontSize: '14px' }}>{config.icon}</span>
+              <div style={styles.compactBarBg}>
+                <div style={{
+                  ...styles.compactBarFill,
+                  width: `${value}%`,
+                  backgroundColor: critical ? '#e74c3c' : config.color,
+                }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
 
   return (
     <div style={styles.container}>
@@ -48,6 +72,28 @@ export default function NeedsBar({ needs }) {
 }
 
 const styles = {
+  compactContainer: {
+    display: 'flex',
+    gap: '6px',
+    alignItems: 'center',
+  },
+  compactItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '2px',
+  },
+  compactBarBg: {
+    width: '28px',
+    height: '4px',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: '2px',
+    overflow: 'hidden',
+  },
+  compactBarFill: {
+    height: '100%',
+    borderRadius: '2px',
+  },
   container: {
     display: 'flex',
     flexDirection: 'column',

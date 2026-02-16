@@ -44,6 +44,21 @@ const SPECIAL_CHEATS = {
   'samen8': { type: 'item', itemId: 'tree_seed', amount: 8, label: '🌰 8x Baumsamen' },
   'samen9': { type: 'item', itemId: 'tree_seed', amount: 9, label: '🌰 9x Baumsamen' },
   'samen10': { type: 'item', itemId: 'tree_seed', amount: 10, label: '🌰 10x Baumsamen' },
+  // Unkraut/Heu-Cheats (simuliert X × 8h Spawns)
+  'heu1': { type: 'weed_spawn', value: 1, label: '🌿 Unkraut: 8h Spawn (2 neue)' },
+  'heu2': { type: 'weed_spawn', value: 2, label: '🌿 Unkraut: 16h Spawn (4 neue)' },
+  'heu3': { type: 'weed_spawn', value: 3, label: '🌿 Unkraut: 24h Spawn (6 neue)' },
+  'heu4': { type: 'weed_spawn', value: 4, label: '🌿 Unkraut: 32h Spawn (8 neue)' },
+  'heu5': { type: 'weed_spawn', value: 5, label: '🌿 Unkraut: 40h Spawn (10 neue)' },
+  'heu6': { type: 'weed_spawn', value: 6, label: '🌿 Unkraut: 48h Spawn (12 neue)' },
+  'heu7': { type: 'weed_spawn', value: 7, label: '🌿 Unkraut: 56h Spawn (14 neue)' },
+  'heu8': { type: 'weed_spawn', value: 8, label: '🌿 Unkraut: 64h Spawn (16 neue)' },
+  'heu9': { type: 'weed_spawn', value: 9, label: '🌿 Unkraut: 72h Spawn (18 neue)' },
+  'heu10': { type: 'weed_spawn', value: 10, label: '🌿 Unkraut: 80h Spawn (20 neue)' },
+  // Werkzeug-Cheats
+  'kristallaxt': { type: 'add_tool', value: 'crystal_axe', label: '🪓 Kristallaxt erhalten' },
+  'steinaxt': { type: 'add_tool', value: 'stone_axe', label: '🪓 Steinaxt erhalten' },
+  'holzaxt': { type: 'add_tool', value: 'wood_axe', label: '🪓 Holzaxt erhalten' },
   // Cheat-Liste anzeigen
   'liste': { type: 'show_list', label: 'Cheat-Liste geöffnet' },
 };

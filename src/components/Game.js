@@ -24,11 +24,11 @@ import {
   resumeGathering,
   finishGathering,
 } from '../systems/GatheringSystem';
-import { drainToolDurability } from '../systems/ToolSystem';
+import { drainToolDurability, hasToolOfTier, getBestTool } from '../systems/ToolSystem';
 import { checkAnimalSpawn, createAnimal, getRandomGrassPosition, ANIMAL_TYPES, feedAnimal } from '../systems/AnimalSystem';
 import items from '../data/items';
 import { PLAYER_SPEED, TILE_SIZE, TILE_TYPES } from '../utils/constants';
-import homeMap, { EXIT_ZONES } from '../data/homeMap';
+import homeMap, { EXIT_ZONES, TREE_POSITION } from '../data/homeMap';
 import { COLLISION_TILES, MAP_COLS, MAP_ROWS } from '../utils/constants';
 
 export default function Game() {
@@ -50,6 +50,8 @@ export default function Game() {
   const [showCheatList, setShowCheatList] = useState(false);
   const [biomePrompt, setBiomePrompt] = useState(null);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
+  const [toolbarExpanded, setToolbarExpanded] = useState(false);
+  const [topBarExpanded, setTopBarExpanded] = useState(false);
 
   // Platzierungsmodus: { type: 'shelter'|'campfire'|'water_collector', level?: number }
   const [placementMode, setPlacementMode] = useState(null);
@@ -59,9 +61,17 @@ export default function Game() {
   const [demolishConfirm, setDemolishConfirm] = useState(null);
   // Tier-Info-Dialog: { id, type, hunger, ... }
   const [animalInfo, setAnimalInfo] = useState(null);
+  // Baumfäll-Dialog: { type: 'main'|'planted', col, row, index? }
+  const [treeFellConfirm, setTreeFellConfirm] = useState(null);
 
   const keysPressed = useRef(new Set());
   const moveInterval = useRef(null);
+  const gameStateRef = useRef(null);
+
+  // Ref synchron halten
+  useEffect(() => {
+    gameStateRef.current = gameState;
+  }, [gameState]);
 
   // Canvas-Größe an Fenster anpassen
   useEffect(() => {
@@ -95,12 +105,13 @@ export default function Game() {
     return null;
   }, []);
 
-  // Tastatur-Steuerung + Bewegungs-Loop (WASD + Click-to-Walk)
+  // Tastatur-Steuerung (WASD + Shortcuts)
   useEffect(() => {
-    if (!gameState || gameState.gathering || gameState.vacation.isActive) return;
-    if (showInventory || showCrafting || showCheats || biomePrompt || isDead || showLoot || demolishConfirm || animalInfo) return;
-
     const handleKeyDown = (e) => {
+      // Eingabefelder ignorieren (z.B. Cheat-Konsole)
+      const tag = e.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
       const key = e.key.toLowerCase();
 
       // ESC beendet Platzierungsmodus
@@ -112,11 +123,6 @@ export default function Game() {
       if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
         e.preventDefault();
         keysPressed.current.add(key);
-        // WASD bricht Click-to-Walk ab
-        setGameState(prev => {
-          if (!prev || !prev.player.targetX) return prev;
-          return { ...prev, player: { x: prev.player.x, y: prev.player.y, moving: true } };
-        });
       }
       // Shortcuts (nicht im Platzierungsmodus)
       if (!placementMode) {
@@ -132,98 +138,103 @@ export default function Game() {
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
 
-    // Bewegungs-Loop (WASD + Click-to-Walk in einem Loop)
-    if (!placementMode) {
-      moveInterval.current = setInterval(() => {
-        setGameState(prev => {
-          if (!prev || prev.gathering) return prev;
-
-          let dx = 0;
-          let dy = 0;
-          let isWASD = false;
-
-          // WASD-Eingabe prüfen
-          if (keysPressed.current.has('w') || keysPressed.current.has('arrowup')) dy -= 1;
-          if (keysPressed.current.has('s') || keysPressed.current.has('arrowdown')) dy += 1;
-          if (keysPressed.current.has('a') || keysPressed.current.has('arrowleft')) dx -= 1;
-          if (keysPressed.current.has('d') || keysPressed.current.has('arrowright')) dx += 1;
-
-          if (dx !== 0 || dy !== 0) {
-            isWASD = true;
-            // Diagonal normalisieren (damit schräg nicht schneller ist)
-            const len = Math.sqrt(dx * dx + dy * dy);
-            dx = (dx / len) * PLAYER_SPEED;
-            dy = (dy / len) * PLAYER_SPEED;
-          } else if (prev.player.targetX !== undefined && prev.player.targetY !== undefined) {
-            // Click-to-Walk: Zum Ziel laufen
-            const tdx = prev.player.targetX - prev.player.x;
-            const tdy = prev.player.targetY - prev.player.y;
-            const dist = Math.sqrt(tdx * tdx + tdy * tdy);
-
-            if (dist < PLAYER_SPEED) {
-              // Ziel erreicht
-              return {
-                ...prev,
-                player: { x: prev.player.targetX, y: prev.player.targetY },
-              };
-            }
-
-            // In Richtung Ziel bewegen
-            dx = (tdx / dist) * PLAYER_SPEED;
-            dy = (tdy / dist) * PLAYER_SPEED;
-          } else {
-            // Keine Bewegung → moving = false
-            if (prev.player.moving) {
-              return { ...prev, player: { x: prev.player.x, y: prev.player.y } };
-            }
-            return prev;
-          }
-
-          const newX = prev.player.x + dx;
-          const newY = prev.player.y + dy;
-          const col = Math.floor(newX / TILE_SIZE);
-          const row = Math.floor(newY / TILE_SIZE);
-
-          // Ausgang-Check
-          const exitDir = checkExitAfterMove(newX, newY);
-          if (exitDir) {
-            setBiomePrompt(exitDir);
-            return { ...prev, player: { x: prev.player.x, y: prev.player.y } };
-          }
-
-          // Begrenzung und Kollision
-          if (col < 0 || col >= MAP_COLS || row < 0 || row >= MAP_ROWS) {
-            // Bei Click-to-Walk: Ziel abbrechen
-            if (!isWASD) return { ...prev, player: { x: prev.player.x, y: prev.player.y } };
-            return prev;
-          }
-          const tileType = homeMap[row]?.[col];
-          if (COLLISION_TILES.includes(tileType)) {
-            // Bei Click-to-Walk: Ziel abbrechen
-            if (!isWASD) return { ...prev, player: { x: prev.player.x, y: prev.player.y } };
-            return prev;
-          }
-
-          // Position aktualisieren (Ziel beibehalten für Click-to-Walk)
-          const newPlayer = { x: newX, y: newY, moving: true };
-          if (!isWASD && prev.player.targetX !== undefined) {
-            newPlayer.targetX = prev.player.targetX;
-            newPlayer.targetY = prev.player.targetY;
-          }
-          return { ...prev, player: newPlayer };
-        });
-      }, 1000 / 60);
-    }
-
-    const currentKeys = keysPressed.current;
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
-      if (moveInterval.current) clearInterval(moveInterval.current);
-      currentKeys.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameState, showInventory, showCrafting, showCheats, biomePrompt, isDead, showLoot, demolishConfirm, animalInfo, placementMode, setGameState, checkExitAfterMove]);
+  }, [placementMode]);
+
+  // Bewegungs-Loop (WASD + Click-to-Walk) - läuft einmalig, liest Keys über Ref
+  useEffect(() => {
+    moveInterval.current = setInterval(() => {
+      const gs = gameStateRef.current;
+      if (!gs || gs.gathering || gs.vacation.isActive) return;
+
+      setGameState(prev => {
+        if (!prev || prev.gathering) return prev;
+
+        let dx = 0;
+        let dy = 0;
+        let isWASD = false;
+
+        // WASD-Eingabe prüfen
+        if (keysPressed.current.has('w') || keysPressed.current.has('arrowup')) dy -= 1;
+        if (keysPressed.current.has('s') || keysPressed.current.has('arrowdown')) dy += 1;
+        if (keysPressed.current.has('a') || keysPressed.current.has('arrowleft')) dx -= 1;
+        if (keysPressed.current.has('d') || keysPressed.current.has('arrowright')) dx += 1;
+
+        if (dx !== 0 || dy !== 0) {
+          isWASD = true;
+          // Diagonal normalisieren (damit schräg nicht schneller ist)
+          const len = Math.sqrt(dx * dx + dy * dy);
+          dx = (dx / len) * PLAYER_SPEED;
+          dy = (dy / len) * PLAYER_SPEED;
+        } else if (prev.player.targetX !== undefined && prev.player.targetY !== undefined) {
+          // Click-to-Walk: Zum Ziel laufen
+          const tdx = prev.player.targetX - prev.player.x;
+          const tdy = prev.player.targetY - prev.player.y;
+          const dist = Math.sqrt(tdx * tdx + tdy * tdy);
+
+          if (dist < PLAYER_SPEED) {
+            return {
+              ...prev,
+              player: { x: prev.player.targetX, y: prev.player.targetY },
+            };
+          }
+
+          dx = (tdx / dist) * PLAYER_SPEED;
+          dy = (tdy / dist) * PLAYER_SPEED;
+        } else {
+          // Keine Bewegung → moving = false
+          if (prev.player.moving) {
+            return { ...prev, player: { x: prev.player.x, y: prev.player.y } };
+          }
+          return prev;
+        }
+
+        // WASD bricht Click-to-Walk ab
+        if (isWASD && prev.player.targetX !== undefined) {
+          prev = { ...prev, player: { x: prev.player.x, y: prev.player.y, moving: true } };
+        }
+
+        const newX = prev.player.x + dx;
+        const newY = prev.player.y + dy;
+        const col = Math.floor(newX / TILE_SIZE);
+        const row = Math.floor(newY / TILE_SIZE);
+
+        // Ausgang-Check
+        const exitDir = checkExitAfterMove(newX, newY);
+        if (exitDir) {
+          setBiomePrompt(exitDir);
+          return { ...prev, player: { x: prev.player.x, y: prev.player.y } };
+        }
+
+        // Begrenzung und Kollision
+        if (col < 0 || col >= MAP_COLS || row < 0 || row >= MAP_ROWS) {
+          if (!isWASD) return { ...prev, player: { x: prev.player.x, y: prev.player.y } };
+          return prev;
+        }
+        const tileType = homeMap[row]?.[col];
+        if (COLLISION_TILES.includes(tileType)) {
+          if (!isWASD) return { ...prev, player: { x: prev.player.x, y: prev.player.y } };
+          return prev;
+        }
+
+        // Position aktualisieren
+        const newPlayer = { x: newX, y: newY, moving: true };
+        if (!isWASD && prev.player.targetX !== undefined) {
+          newPlayer.targetX = prev.player.targetX;
+          newPlayer.targetY = prev.player.targetY;
+        }
+        return { ...prev, player: newPlayer };
+      });
+    }, 1000 / 60);
+
+    return () => {
+      if (moveInterval.current) clearInterval(moveInterval.current);
+    };
+  }, [setGameState, checkExitAfterMove]);
 
   // Prüfen ob eine Tile für Platzierung gültig ist
   const isTileValidForPlacement = useCallback((col, row) => {
@@ -379,11 +390,10 @@ export default function Game() {
   // Touch-Steuerung (Klick auf Karte)
   const handleMapClick = useCallback((worldX, worldY) => {
     if (!gameState || gameState.gathering || gameState.vacation.isActive) return;
-    if (showInventory || showCrafting || biomePrompt || demolishConfirm || animalInfo) return;
+    if (showInventory || showCrafting || biomePrompt || demolishConfirm || animalInfo || treeFellConfirm) return;
 
     const col = Math.floor(worldX / TILE_SIZE);
     const row = Math.floor(worldY / TILE_SIZE);
-
     // Im Platzierungsmodus: Gebäude oder Baum platzieren
     if (placementMode) {
       if (placementMode.type === 'tree_seed') {
@@ -428,6 +438,50 @@ export default function Game() {
       return;
     }
 
+    // Prüfen ob Unkraut angeklickt wurde
+    const weeds = gameState.weeds || [];
+    const clickedWeedIdx = weeds.findIndex(w => w.col === col && w.row === row);
+    if (clickedWeedIdx >= 0) {
+      const weed = weeds[clickedWeedIdx];
+      setGameState(prev => {
+        const newWeeds = [...(prev.weeds || [])];
+        newWeeds.splice(clickedWeedIdx, 1);
+
+        // Stufe 3 gibt Heu ins Inventar
+        if (weed.stage >= 3) {
+          const newInventory = { ...prev.inventory };
+          if (!newInventory.hay) {
+            newInventory.hay = { amount: 0, collectedAt: Date.now() };
+          }
+          newInventory.hay = {
+            ...newInventory.hay,
+            amount: newInventory.hay.amount + 1,
+          };
+          return { ...prev, weeds: newWeeds, inventory: newInventory };
+        }
+
+        return { ...prev, weeds: newWeeds };
+      });
+      setTimeout(() => manualSave(), 0);
+      return;
+    }
+
+    // Prüfen ob ein Baum angeklickt wurde (Kristallaxt noetig zum Faellen)
+    const isMainTree = col === TREE_POSITION.col && row === TREE_POSITION.row;
+    const plantedTrees = gameState.plantedTrees || [];
+    const clickedPlantedIdx = plantedTrees.findIndex(t => t.col === col && t.row === row);
+    if (isMainTree || clickedPlantedIdx >= 0) {
+      if (hasToolOfTier(gameState.tools || [], 'axe', 'crystal')) {
+        setTreeFellConfirm({
+          type: isMainTree ? 'main' : 'planted',
+          col,
+          row,
+          index: clickedPlantedIdx >= 0 ? clickedPlantedIdx : undefined,
+        });
+      }
+      return; // Baum blockiert Klick auch ohne Axt
+    }
+
     // Prüfen ob ein platziertes Gebäude angeklickt wurde
     const placed = gameState.placedBuildings || [];
     const clickedBuildingIdx = placed.findIndex(b => b.col === col && b.row === row);
@@ -460,7 +514,63 @@ export default function Game() {
         }));
       }
     }
-  }, [gameState, showInventory, showCrafting, biomePrompt, demolishConfirm, animalInfo, placementMode, setGameState, manualSave, checkExitAfterMove, handlePlaceBuilding, handlePlantTree]);
+  }, [gameState, showInventory, showCrafting, biomePrompt, demolishConfirm, animalInfo, treeFellConfirm, placementMode, setGameState, manualSave, checkExitAfterMove, handlePlaceBuilding, handlePlantTree]);
+
+  // Baum faellen (Kristallaxt noetig)
+  const handleFellTree = useCallback(() => {
+    if (!treeFellConfirm) return;
+
+    setGameState(prev => {
+      const tools = prev.tools || [];
+      // Kristallaxt finden und Haltbarkeit reduzieren (30 Min pro Baum)
+      const axe = getBestTool(tools, 'axe');
+      if (!axe || axe.tier !== 'crystal') return prev;
+
+      const newTools = tools.map(t => {
+        if (t.id === axe.id && t.tier === 'crystal') {
+          return { ...t, durability: Math.max(0, t.durability - 30) };
+        }
+        return t;
+      }).filter(t => t.durability > 0);
+
+      // Holz ins Inventar (Hauptbaum: mehr Holz je nach Stufe)
+      const newInventory = { ...prev.inventory };
+      const woodAmount = treeFellConfirm.type === 'main'
+        ? Math.max(5, (prev.treeStage || 1) * 3) // Hauptbaum: 3-30 Holz je nach Stufe
+        : 5; // Gepflanzter Baum: 5 Holz
+
+      if (!newInventory.wood) {
+        newInventory.wood = { amount: 0, collectedAt: Date.now() };
+      }
+      newInventory.wood = {
+        ...newInventory.wood,
+        amount: newInventory.wood.amount + woodAmount,
+      };
+
+      // Baum entfernen
+      let newPlantedTrees = prev.plantedTrees || [];
+      let newTreeStage = prev.treeStage;
+
+      if (treeFellConfirm.type === 'planted' && treeFellConfirm.index !== undefined) {
+        newPlantedTrees = [...newPlantedTrees];
+        newPlantedTrees.splice(treeFellConfirm.index, 1);
+      } else if (treeFellConfirm.type === 'main') {
+        // Hauptbaum: zurueck auf Stufe 1
+        newTreeStage = 1;
+      }
+
+      return {
+        ...prev,
+        tools: newTools,
+        inventory: newInventory,
+        plantedTrees: newPlantedTrees,
+        treeStage: newTreeStage,
+      };
+    });
+
+    setTreeFellConfirm(null);
+    setTimeout(() => manualSave(), 0);
+  }, [treeFellConfirm, setGameState, manualSave]);
 
   // Gebäude abreißen
   const handleDemolish = useCallback(() => {
@@ -756,6 +866,96 @@ export default function Game() {
         treeStage: command.value,
       }));
       setTimeout(() => manualSave(), 0);
+    } else if (command.type === 'weed_spawn') {
+      // Unkraut spawnen: X Runden a 2 Unkraeuter
+      // Jede Runde spawnt 2 neue Unkraeuter. Aeltere Runden starten mit hoeherer Stufe.
+      setGameState(prev => {
+        let weeds = [...(prev.weeds || [])];
+        const rounds = command.value;
+
+        for (let r = 0; r < rounds; r++) {
+          // Freie Gras-Tiles finden (jede Runde neu, da vorherige Runde Tiles belegt hat)
+          const freeTiles = [];
+          for (let row = 0; row < MAP_ROWS; row++) {
+            for (let col = 0; col < MAP_COLS; col++) {
+              if (homeMap[row]?.[col] !== TILE_TYPES.GRASS) continue;
+              if (prev.placedBuildings?.some(b => b.col === col && b.row === row)) continue;
+              if (prev.plantedTrees?.some(t => t.col === col && t.row === row)) continue;
+              if (col === 3 && row === 3) continue;
+              // Nicht auf bereits belegtem Unkraut (es sei denn Stufe < 3)
+              freeTiles.push({ col, row });
+            }
+          }
+
+          // Wie viele 8h-Zyklen ist diese Runde her?
+          // Letzte Runde (r = rounds-1) = gerade gespawnt (0h), erste Runde (r=0) = aelteste
+          const roundsAgo = rounds - 1 - r; // 0 = neueste, rounds-1 = aelteste
+          // Stage und spawnedAt muessen zusammenpassen (growWeeds berechnet Stage aus spawnedAt)
+          const GROWTH_8H = 8 * 60 * 60 * 1000;
+          const spawnedAt = Date.now() - roundsAgo * GROWTH_8H;
+
+          let spawned = 0;
+          while (spawned < 2 && freeTiles.length > 0) {
+            let chosenIdx;
+
+            // 70% Chance: Neben bestehendem Unkraut
+            if (weeds.length > 0 && Math.random() < 0.7) {
+              const sourceWeed = weeds[Math.floor(Math.random() * weeds.length)];
+              const neighborIdxs = [];
+              for (let i = 0; i < freeTiles.length; i++) {
+                const t = freeTiles[i];
+                const dc = Math.abs(t.col - sourceWeed.col);
+                const dr = Math.abs(t.row - sourceWeed.row);
+                if (dc <= 1 && dr <= 1 && (dc + dr > 0)) {
+                  neighborIdxs.push(i);
+                }
+              }
+              chosenIdx = neighborIdxs.length > 0
+                ? neighborIdxs[Math.floor(Math.random() * neighborIdxs.length)]
+                : Math.floor(Math.random() * freeTiles.length);
+            } else {
+              chosenIdx = Math.floor(Math.random() * freeTiles.length);
+            }
+
+            const tile = freeTiles[chosenIdx];
+            const existingIdx = weeds.findIndex(w => w.col === tile.col && w.row === tile.row);
+            if (existingIdx >= 0) {
+              // Bestehendes Unkraut: Stufe erhoehen
+              if (weeds[existingIdx].stage < 3) {
+                weeds[existingIdx] = { ...weeds[existingIdx], stage: Math.min(3, weeds[existingIdx].stage + 1) };
+              }
+            } else {
+              // Neues Unkraut: spawnedAt bestimmt Alter, growWeeds() berechnet Stage daraus
+              weeds.push({
+                col: tile.col,
+                row: tile.row,
+                stage: 1, // growWeeds() wird das korrekt anpassen
+                spawnedAt: spawnedAt,
+              });
+            }
+            freeTiles.splice(chosenIdx, 1);
+            spawned++;
+          }
+        }
+
+        return { ...prev, weeds, lastWeedSpawn: Date.now() };
+      });
+      setTimeout(() => manualSave(), 0);
+    } else if (command.type === 'add_tool') {
+      // Werkzeug hinzufügen
+      const itemDef = items[command.value];
+      if (itemDef && itemDef.category === 'tool') {
+        setGameState(prev => ({
+          ...prev,
+          tools: [...(prev.tools || []), {
+            id: itemDef.id,
+            toolType: itemDef.toolType,
+            tier: itemDef.tier,
+            durability: itemDef.durability,
+          }],
+        }));
+        setTimeout(() => manualSave(), 0);
+      }
     } else if (command.type === 'show_list') {
       // Cheat-Liste anzeigen
       setShowCheatList(true);
@@ -802,17 +1002,29 @@ export default function Game() {
         <>
           {/* Obere Leiste */}
           <div style={styles.topBar}>
-            <div style={styles.topLeft}>
-              <VacationButton
-                vacation={gameState.vacation}
-                onVacationChange={handleVacationChange}
-              />
-            </div>
-            <div style={styles.topCenter}>
+            {/* Links: Wetter + Urlaub (einklappbar) */}
+            <div
+              style={styles.topLeft}
+              onClick={() => setTopBarExpanded(!topBarExpanded)}
+            >
               <WeatherDisplay weather={gameState.weather} />
+              <span style={styles.toggleArrow}>{topBarExpanded ? '▲' : '▼'}</span>
             </div>
-            <div style={styles.topRight}>
-              <NeedsBar needs={gameState.needs} />
+            {topBarExpanded && (
+              <div style={styles.topLeftExpanded}>
+                <VacationButton
+                  vacation={gameState.vacation}
+                  onVacationChange={handleVacationChange}
+                />
+              </div>
+            )}
+
+            {/* Rechts: NeedsBar (einklappbar) */}
+            <div
+              style={styles.topRight}
+              onClick={() => setTopBarExpanded(!topBarExpanded)}
+            >
+              <NeedsBar needs={gameState.needs} compact={!topBarExpanded} />
             </div>
           </div>
 
@@ -828,32 +1040,43 @@ export default function Game() {
             </div>
           )}
 
-          {/* Untere Leiste (nicht im Platzierungsmodus) */}
+          {/* Untere Leiste - einklappbar (nicht im Platzierungsmodus) */}
           {!placementMode && (
             <div style={styles.bottomBar}>
-              <button
-                style={styles.actionBtn}
-                onClick={() => setShowInventory(true)}
+              <div
+                style={styles.bottomBarToggle}
+                onClick={() => setToolbarExpanded(!toolbarExpanded)}
               >
-                <span style={styles.btnIcon}>🎒</span>
-                <span style={styles.btnLabel}>Inventar</span>
-                <span style={styles.btnHint}>[I]</span>
-              </button>
-              <button
-                style={styles.actionBtn}
-                onClick={() => setShowCrafting(true)}
-              >
-                <span style={styles.btnIcon}>🔨</span>
-                <span style={styles.btnLabel}>Handwerk</span>
-                <span style={styles.btnHint}>[C]</span>
-              </button>
-              <button
-                style={{ ...styles.actionBtn, borderColor: 'rgba(230,126,34,0.4)' }}
-                onClick={() => setShowCheats(true)}
-              >
-                <span style={styles.btnIcon}>🔧</span>
-                <span style={styles.btnLabel}>Cheats</span>
-              </button>
+                <span style={{ fontSize: '16px' }}>🎒🔨🔧</span>
+                <span style={styles.toggleArrow}>{toolbarExpanded ? '▼' : '▲'}</span>
+              </div>
+              {toolbarExpanded && (
+                <div style={styles.bottomBarContent}>
+                  <button
+                    style={styles.actionBtn}
+                    onClick={() => setShowInventory(true)}
+                  >
+                    <span style={styles.btnIcon}>🎒</span>
+                    <span style={styles.btnLabel}>Inventar</span>
+                    <span style={styles.btnHint}>[I]</span>
+                  </button>
+                  <button
+                    style={styles.actionBtn}
+                    onClick={() => setShowCrafting(true)}
+                  >
+                    <span style={styles.btnIcon}>🔨</span>
+                    <span style={styles.btnLabel}>Handwerk</span>
+                    <span style={styles.btnHint}>[C]</span>
+                  </button>
+                  <button
+                    style={{ ...styles.actionBtn, borderColor: 'rgba(230,126,34,0.4)' }}
+                    onClick={() => setShowCheats(true)}
+                  >
+                    <span style={styles.btnIcon}>🔧</span>
+                    <span style={styles.btnLabel}>Cheats</span>
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -926,6 +1149,29 @@ export default function Game() {
         />
       )}
 
+      {/* Baumfäll-Dialog */}
+      {treeFellConfirm && (
+        <div style={styles.fellOverlay} onClick={() => setTreeFellConfirm(null)}>
+          <div style={styles.fellPanel} onClick={e => e.stopPropagation()}>
+            <h3 style={styles.fellTitle}>🪓 Baum fällen?</h3>
+            <p style={styles.fellText}>
+              {treeFellConfirm.type === 'main'
+                ? `Willst du den Hauptbaum (Stufe ${gameState?.treeStage || 1}) fällen? Er wird auf Stufe 1 zurückgesetzt. Du erhältst ${Math.max(5, (gameState?.treeStage || 1) * 3)} Holz.`
+                : 'Willst du diesen Baum fällen? Du erhältst 5 Holz.'}
+            </p>
+            <p style={styles.fellCost}>Kristallaxt: -30 Min Haltbarkeit</p>
+            <div style={styles.fellButtons}>
+              <button style={styles.fellCancelBtn} onClick={() => setTreeFellConfirm(null)}>
+                Abbrechen
+              </button>
+              <button style={styles.fellConfirmBtn} onClick={handleFellTree}>
+                Fällen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tier-Info-Dialog */}
       {animalInfo && (
         <AnimalInfoDialog
@@ -973,18 +1219,39 @@ const styles = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    padding: '12px',
-    pointerEvents: 'none',
+    padding: '0 8px',
     zIndex: 10,
+    pointerEvents: 'none',
   },
   topLeft: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '6px 12px',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: '0 0 10px 10px',
+    cursor: 'pointer',
     pointerEvents: 'auto',
   },
-  topCenter: {
+  topLeftExpanded: {
+    position: 'fixed',
+    top: '36px',
+    left: '8px',
+    padding: '6px 12px',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: '0 0 10px 10px',
     pointerEvents: 'auto',
   },
   topRight: {
+    padding: '6px 12px',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: '0 0 10px 10px',
+    cursor: 'pointer',
     pointerEvents: 'auto',
+  },
+  toggleArrow: {
+    color: '#888',
+    fontSize: '10px',
   },
   bottomBar: {
     position: 'fixed',
@@ -992,11 +1259,30 @@ const styles = {
     left: 0,
     right: 0,
     display: 'flex',
-    justifyContent: 'center',
-    gap: '12px',
-    padding: '16px',
+    flexDirection: 'column',
+    alignItems: 'center',
     pointerEvents: 'none',
     zIndex: 10,
+  },
+  bottomBarToggle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '6px 16px',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: '12px 12px 0 0',
+    cursor: 'pointer',
+    pointerEvents: 'auto',
+  },
+  bottomBarContent: {
+    display: 'flex',
+    justifyContent: 'center',
+    gap: '12px',
+    padding: '12px 16px',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: '12px 12px 0 0',
+    pointerEvents: 'auto',
+    marginTop: '2px',
   },
   actionBtn: {
     display: 'flex',
@@ -1064,5 +1350,67 @@ const styles = {
     fontWeight: 'bold',
     zIndex: 10,
     textAlign: 'center',
+  },
+  // Baumfäll-Dialog
+  fellOverlay: {
+    position: 'fixed',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 150,
+  },
+  fellPanel: {
+    backgroundColor: '#1a1a2e',
+    border: '2px solid #e67e22',
+    borderRadius: '12px',
+    padding: '20px',
+    width: '90%',
+    maxWidth: '340px',
+    textAlign: 'center',
+  },
+  fellTitle: {
+    color: '#e67e22',
+    fontSize: '18px',
+    margin: '0 0 12px',
+  },
+  fellText: {
+    color: '#ccc',
+    fontSize: '13px',
+    lineHeight: '1.5',
+    margin: '0 0 8px',
+  },
+  fellCost: {
+    color: '#e74c3c',
+    fontSize: '12px',
+    margin: '0 0 16px',
+  },
+  fellButtons: {
+    display: 'flex',
+    gap: '10px',
+    justifyContent: 'center',
+  },
+  fellCancelBtn: {
+    flex: 1,
+    padding: '10px',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    color: '#ccc',
+    border: '1px solid #555',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: 'bold',
+  },
+  fellConfirmBtn: {
+    flex: 1,
+    padding: '10px',
+    backgroundColor: 'rgba(231, 76, 60, 0.3)',
+    color: '#e74c3c',
+    border: '1px solid rgba(231, 76, 60, 0.5)',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: 'bold',
   },
 };
