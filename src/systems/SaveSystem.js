@@ -80,6 +80,12 @@ export function getDefaultGameState() {
     // Letzter Unkraut-Spawn
     lastWeedSpawn: null,
 
+    // Tagebuch (Lernfach-Tracking) - überlebt den Tod
+    diary: {
+      topics: [],        // [{ id, name, totalTimeMs, createdAt }]
+      activeTopicId: null,
+    },
+
     // Statistiken
     stats: {
       daysAlive: 0,
@@ -158,6 +164,11 @@ export function loadGame() {
     if (!gameState.weeds) gameState.weeds = [];
     if (gameState.lastWeedSpawn === undefined) gameState.lastWeedSpawn = null;
 
+    // Migration: Tagebuch ergänzen
+    if (!gameState.diary) {
+      gameState.diary = { topics: [], activeTopicId: null };
+    }
+
     // Migration: Tier-Hunger ergänzen (alte Tiere ohne hunger-Feld)
     if (gameState.animals && gameState.animals.length > 0) {
       let hungerMigrated = false;
@@ -205,20 +216,22 @@ export function loadGame() {
 
 // Spielstand löschen (bei Tod)
 export function resetGame() {
-  // Urlaubsstunden beibehalten
+  // Tagebuch beibehalten
   const oldState = loadGame();
-  const vacationData = oldState?.vacation || {
+  const diaryData = oldState?.diary || { topics: [], activeTopicId: null };
+
+  const newState = getDefaultGameState();
+
+  // Urlaubstage nach Tod komplett zurücksetzen (volle 30 Tage)
+  newState.vacation = {
     isActive: false,
     activatedAt: null,
     usedHoursThisYear: 0,
     currentYear: new Date().getFullYear(),
   };
-
-  const newState = getDefaultGameState();
-  newState.vacation = {
-    ...vacationData,
-    isActive: false,
-    activatedAt: null,
+  newState.diary = {
+    ...diaryData,
+    activeTopicId: null, // Aktive Reise zurücksetzen, Themen bleiben
   };
 
   saveGame(newState);

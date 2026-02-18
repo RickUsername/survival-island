@@ -7,9 +7,9 @@ import { loadGame, saveGame, getDefaultGameState, resetGame } from '../systems/S
 import { updateNeeds, calculateOfflineNeeds, checkDeath, updateWaterCollector } from '../systems/NeedsSystem';
 import { checkWeatherUpdate, getCurrentWeather } from '../systems/WeatherSystem';
 import { checkVacationExpiry } from '../systems/VacationSystem';
-import { SAVE_INTERVAL, TILE_SIZE, COLLISION_TILES, MAP_COLS, MAP_ROWS, MAX_GATHERING_DURATION, FOOD_SPOIL_TIME, TILE_TYPES, HUNGER_DRAIN_PER_SEC, THIRST_DRAIN_PER_SEC, MOOD_DRAIN_PER_SEC, SHELTER_MOOD_MODIFIERS, WEATHER_TYPES } from '../utils/constants';
+import { SAVE_INTERVAL, TILE_SIZE, COLLISION_TILES, MAP_COLS, MAP_ROWS, FOOD_SPOIL_TIME, TILE_TYPES, HUNGER_DRAIN_PER_SEC, THIRST_DRAIN_PER_SEC, MOOD_DRAIN_PER_SEC, SHELTER_MOOD_MODIFIERS, WEATHER_TYPES } from '../utils/constants';
 import { updateAnimals, updateAnimalHunger, checkTreeFruitDrop, checkTreeSeedDrop, checkAnimalSpawn } from '../systems/AnimalSystem';
-import { finishGathering, getElapsedGatheringTime } from '../systems/GatheringSystem';
+import { finishGathering, getElapsedGatheringTime, isGatheringComplete } from '../systems/GatheringSystem';
 import { drainToolDurability } from '../systems/ToolSystem';
 import { isWaterCollectorActive } from '../systems/NeedsSystem';
 import homeMap, { EXIT_ZONES, TREE_POSITION } from '../data/homeMap';
@@ -186,8 +186,7 @@ export default function useGameLoop() {
 
     // Offline Sammelreise abschließen (wenn Reise abgelaufen ist)
     if (!state.vacation.isActive && state.gathering) {
-      const elapsed = getElapsedGatheringTime(state.gathering);
-      if (elapsed >= MAX_GATHERING_DURATION) {
+      if (isGatheringComplete(state.gathering)) {
         // Reise war voll abgelaufen → Loot berechnen und anzeigen
         const result = finishGathering(state.gathering, state.tools || []);
 
@@ -211,6 +210,19 @@ export default function useGameLoop() {
         const newNeeds = { ...state.needs };
         newNeeds.mood = Math.min(100, newNeeds.mood + result.moodGain);
         state.needs = newNeeds;
+
+        // Tagebuch: Reisezeit dem aktiven Thema gutschreiben
+        if (result.topicId && state.diary?.topics) {
+          state.diary = {
+            ...state.diary,
+            activeTopicId: null,
+            topics: state.diary.topics.map(t =>
+              t.id === result.topicId
+                ? { ...t, totalTimeMs: t.totalTimeMs + result.duration }
+                : t
+            ),
+          };
+        }
 
         // Biom-Besuche
         const newBiomeVisits = { ...(state.biomeVisits || {}) };

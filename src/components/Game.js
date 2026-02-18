@@ -16,6 +16,7 @@ import DeathScreen from './DeathScreen';
 import BiomePrompt from './BiomePrompt';
 import CheatConsole from './CheatConsole';
 import CheatListDialog from './CheatListDialog';
+import DiaryPanel from './DiaryPanel';
 import DemolishDialog from './DemolishDialog';
 import AnimalInfoDialog from './AnimalInfoDialog';
 import {
@@ -48,6 +49,7 @@ export default function Game() {
   const [showCrafting, setShowCrafting] = useState(false);
   const [showCheats, setShowCheats] = useState(false);
   const [showCheatList, setShowCheatList] = useState(false);
+  const [showDiary, setShowDiary] = useState(false);
   const [biomePrompt, setBiomePrompt] = useState(null);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
   const [toolbarExpanded, setToolbarExpanded] = useState(false);
@@ -128,6 +130,7 @@ export default function Game() {
       if (!placementMode) {
         if (key === 'i') setShowInventory(v => !v);
         if (key === 'c') setShowCrafting(v => !v);
+        if (key === 't') setShowDiary(v => !v);
       }
     };
 
@@ -670,10 +673,14 @@ export default function Game() {
   }, [animalInfo, setGameState, manualSave]);
 
   // Sammelreise starten
-  const handleStartGathering = useCallback((direction) => {
+  const handleStartGathering = useCallback((direction, topicId = null, targetDuration = null) => {
     setGameState(prev => ({
       ...prev,
-      gathering: startGathering(direction),
+      gathering: startGathering(direction, topicId, targetDuration),
+      diary: {
+        ...prev.diary,
+        activeTopicId: topicId,
+      },
       stats: {
         ...prev.stats,
         totalGatheringTrips: prev.stats.totalGatheringTrips + 1,
@@ -764,6 +771,20 @@ export default function Game() {
         lootResult = { ...lootResult, newAnimal };
       }
 
+      // Tagebuch: Reisezeit dem aktiven Thema gutschreiben
+      let newDiary = prev.diary;
+      if (prev.gathering.topicId && prev.diary?.topics) {
+        newDiary = {
+          ...prev.diary,
+          activeTopicId: null,
+          topics: prev.diary.topics.map(t =>
+            t.id === prev.gathering.topicId
+              ? { ...t, totalTimeMs: t.totalTimeMs + result.duration }
+              : t
+          ),
+        };
+      }
+
       return {
         ...prev,
         gathering: null,
@@ -772,6 +793,7 @@ export default function Game() {
         needs: newNeeds,
         animals: newAnimals,
         biomeVisits: newBiomeVisits,
+        diary: newDiary,
         stats: {
           ...prev.stats,
           totalItemsCollected: prev.stats.totalItemsCollected + totalNew,
@@ -980,6 +1002,39 @@ export default function Game() {
     }
   }, [setGameState, manualSave]);
 
+  // Tagebuch: Thema hinzufügen
+  const handleAddTopic = useCallback((name) => {
+    setGameState(prev => ({
+      ...prev,
+      diary: {
+        ...prev.diary,
+        topics: [
+          ...prev.diary.topics,
+          {
+            id: `topic_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+            name,
+            totalTimeMs: 0,
+            createdAt: Date.now(),
+          },
+        ],
+      },
+    }));
+    setTimeout(() => manualSave(), 0);
+  }, [setGameState, manualSave]);
+
+  // Tagebuch: Thema löschen
+  const handleDeleteTopic = useCallback((topicId) => {
+    setGameState(prev => ({
+      ...prev,
+      diary: {
+        ...prev.diary,
+        topics: prev.diary.topics.filter(t => t.id !== topicId),
+        activeTopicId: prev.diary.activeTopicId === topicId ? null : prev.diary.activeTopicId,
+      },
+    }));
+    setTimeout(() => manualSave(), 0);
+  }, [setGameState, manualSave]);
+
   // Lade-Bildschirm
   if (!gameState) {
     return (
@@ -1008,6 +1063,11 @@ export default function Game() {
         <GatheringScreen
           gathering={gameState.gathering}
           needs={gameState.needs}
+          activeTopicName={
+            gameState.gathering?.topicId
+              ? gameState.diary?.topics?.find(t => t.id === gameState.gathering.topicId)?.name
+              : null
+          }
           onPause={handlePauseGathering}
           onResume={handleResumeGathering}
           onCancel={handleFinishGathering}
@@ -1065,7 +1125,7 @@ export default function Game() {
                 style={styles.bottomBarToggle}
                 onClick={() => setToolbarExpanded(!toolbarExpanded)}
               >
-                <span style={{ fontSize: '16px' }}>🎒🔨🔧</span>
+                <span style={{ fontSize: '16px' }}>🎒🔨📖🔧</span>
                 <span style={styles.toggleArrow}>{toolbarExpanded ? '▼' : '▲'}</span>
               </div>
               {toolbarExpanded && (
@@ -1085,6 +1145,14 @@ export default function Game() {
                     <span style={styles.btnIcon}>🔨</span>
                     <span style={styles.btnLabel}>Handwerk</span>
                     <span style={styles.btnHint}>[C]</span>
+                  </button>
+                  <button
+                    style={{ ...styles.actionBtn, borderColor: 'rgba(139,115,85,0.4)' }}
+                    onClick={() => setShowDiary(true)}
+                  >
+                    <span style={styles.btnIcon}>📖</span>
+                    <span style={styles.btnLabel}>Tagebuch</span>
+                    <span style={styles.btnHint}>[T]</span>
                   </button>
                   <button
                     style={{ ...styles.actionBtn, borderColor: 'rgba(230,126,34,0.4)' }}
@@ -1111,7 +1179,8 @@ export default function Game() {
       {biomePrompt && (
         <BiomePrompt
           direction={biomePrompt}
-          onConfirm={() => handleStartGathering(biomePrompt)}
+          diary={gameState.diary}
+          onConfirm={(topicId, targetDuration) => handleStartGathering(biomePrompt, topicId, targetDuration)}
           onCancel={() => setBiomePrompt(null)}
         />
       )}
@@ -1148,6 +1217,16 @@ export default function Game() {
       {/* Cheat-Liste (verschiebbar, bleibt offen) */}
       {showCheatList && (
         <CheatListDialog onClose={() => setShowCheatList(false)} />
+      )}
+
+      {/* Tagebuch */}
+      {showDiary && (
+        <DiaryPanel
+          diary={gameState.diary}
+          onAddTopic={handleAddTopic}
+          onDeleteTopic={handleDeleteTopic}
+          onClose={() => setShowDiary(false)}
+        />
       )}
 
       {/* Loot-Anzeige */}

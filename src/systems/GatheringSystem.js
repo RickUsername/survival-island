@@ -9,20 +9,28 @@ import { getActiveToolTypes } from './ToolSystem';
 import lootTables from '../data/lootTables';
 
 // Neue Sammelreise starten
-export function startGathering(biome) {
+export function startGathering(biome, topicId = null, targetDuration = null) {
   return {
     biome,
     startTime: Date.now(),
     pausedAt: null,         // Zeitpunkt der Pause (null = läuft)
     totalPausedMs: 0,       // Gesamte Pausenzeit
     status: 'active',       // active | paused | returning
+    topicId,                // Aktives Lernthema (null = keins)
+    targetDuration,         // Gewählte Zieldauer in ms (null = MAX_GATHERING_DURATION)
   };
+}
+
+// Zieldauer einer Sammelreise ermitteln
+export function getTargetDuration(gathering) {
+  return gathering?.targetDuration || MAX_GATHERING_DURATION;
 }
 
 // Verstrichene aktive Sammelzeit berechnen
 export function getElapsedGatheringTime(gathering) {
   if (!gathering) return 0;
 
+  const maxDuration = getTargetDuration(gathering);
   const now = Date.now();
   let elapsed;
 
@@ -34,7 +42,7 @@ export function getElapsedGatheringTime(gathering) {
     elapsed = now - gathering.startTime - gathering.totalPausedMs;
   }
 
-  return Math.min(elapsed, MAX_GATHERING_DURATION);
+  return Math.min(elapsed, maxDuration);
 }
 
 // Sammelreise pausieren
@@ -82,14 +90,16 @@ export function finishGathering(gathering, tools = []) {
     moodGain,
     duration: elapsed,
     biome: gathering.biome,
+    topicId: gathering.topicId,
     usedToolTypes, // Für Haltbarkeits-Abzug
   };
 }
 
-// Prüfen ob maximale Sammelzeit erreicht
+// Prüfen ob Sammelzeit erreicht (Zieldauer oder Maximum)
 export function isGatheringComplete(gathering) {
   if (!gathering) return false;
-  return getElapsedGatheringTime(gathering) >= MAX_GATHERING_DURATION;
+  const maxDuration = getTargetDuration(gathering);
+  return getElapsedGatheringTime(gathering) >= maxDuration;
 }
 
 // Zeit formatieren (ms → hh:mm:ss)

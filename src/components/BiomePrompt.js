@@ -2,8 +2,8 @@
 // Biom-Bestätigung beim Verlassen der Heimat-Map
 // ============================================
 
-import React from 'react';
-import { BIOMES } from '../utils/constants';
+import React, { useState } from 'react';
+import { BIOMES, GATHERING_DURATION_OPTIONS } from '../utils/constants';
 
 const biomeColors = {
   north: '#2d7a1e',
@@ -19,9 +19,16 @@ const biomeDescriptions = {
   east: 'Felsige Klippen mit Stein, Eisenerz und seltenen Kristallen.',
 };
 
-export default function BiomePrompt({ direction, onConfirm, onCancel }) {
+export default function BiomePrompt({ direction, diary, onConfirm, onCancel }) {
   const biome = Object.values(BIOMES).find(b => b.direction === direction);
+  const [selectedTopicId, setSelectedTopicId] = useState(null);
+  const [selectedDuration, setSelectedDuration] = useState(
+    GATHERING_DURATION_OPTIONS[GATHERING_DURATION_OPTIONS.length - 1].value // Default: 2 Std
+  );
+
   if (!biome) return null;
+
+  const topics = diary?.topics || [];
 
   return (
     <div style={styles.overlay}>
@@ -30,21 +37,64 @@ export default function BiomePrompt({ direction, onConfirm, onCancel }) {
           ...styles.biomeIcon,
           backgroundColor: biomeColors[direction],
         }}>
-          {direction === 'north' ? '🌲' :
-           direction === 'south' ? '🐟' :
-           direction === 'west' ? '🌾' : '⛰️'}
+          {direction === 'north' ? '\uD83C\uDF32' :
+           direction === 'south' ? '\uD83D\uDC1F' :
+           direction === 'west' ? '\uD83C\uDF3E' : '\u26F0\uFE0F'}
         </div>
 
         <h2 style={styles.title}>Sammelreise: {biome.name}</h2>
         <p style={styles.description}>{biomeDescriptions[direction]}</p>
 
+        {/* Lernthema auswählen */}
+        <div style={styles.section}>
+          <label style={styles.sectionLabel}>Lernthema (optional)</label>
+          {topics.length === 0 ? (
+            <p style={styles.noTopics}>
+              Erstelle Themen im Tagebuch, um Lernzeit zu tracken.
+            </p>
+          ) : (
+            <select
+              style={styles.topicSelect}
+              value={selectedTopicId || ''}
+              onChange={e => setSelectedTopicId(e.target.value || null)}
+            >
+              <option value="">-- Kein Thema --</option>
+              {topics.map(t => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        {/* Reisedauer auswählen */}
+        <div style={styles.section}>
+          <label style={styles.sectionLabel}>Reisedauer</label>
+          <div style={styles.durationGrid}>
+            {GATHERING_DURATION_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                style={{
+                  ...styles.durationBtn,
+                  ...(selectedDuration === opt.value ? styles.durationBtnActive : {}),
+                }}
+                onClick={() => setSelectedDuration(opt.value)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div style={styles.info}>
-          <p>Max. Dauer: 2 Stunden Echtzeit</p>
+          <p>Wecker klingelt nach Ablauf der Zeit.</p>
           <p>Bedürfnisse laufen weiter!</p>
         </div>
 
         <div style={styles.buttons}>
-          <button style={styles.confirmBtn} onClick={onConfirm}>
+          <button
+            style={styles.confirmBtn}
+            onClick={() => onConfirm(selectedTopicId, selectedDuration)}
+          >
             Losziehen!
           </button>
           <button style={styles.cancelBtn} onClick={onCancel}>
@@ -75,8 +125,10 @@ const styles = {
     borderRadius: '16px',
     padding: '24px',
     textAlign: 'center',
-    maxWidth: '380px',
+    maxWidth: '420px',
     width: '90%',
+    maxHeight: '90vh',
+    overflowY: 'auto',
   },
   biomeIcon: {
     width: '64px',
@@ -96,7 +148,57 @@ const styles = {
   description: {
     color: '#aaa',
     fontSize: '14px',
-    margin: '0 0 16px',
+    margin: '0 0 12px',
+  },
+  section: {
+    textAlign: 'left',
+    marginBottom: '14px',
+  },
+  sectionLabel: {
+    color: '#888',
+    fontSize: '12px',
+    textTransform: 'uppercase',
+    letterSpacing: '1px',
+    display: 'block',
+    marginBottom: '6px',
+  },
+  noTopics: {
+    color: '#666',
+    fontSize: '12px',
+    margin: '0',
+    fontStyle: 'italic',
+  },
+  topicSelect: {
+    width: '100%',
+    padding: '10px 12px',
+    backgroundColor: '#0a0a1a',
+    border: '2px solid #444',
+    borderRadius: '8px',
+    color: '#fff',
+    fontSize: '14px',
+    outline: 'none',
+    cursor: 'pointer',
+  },
+  durationGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(4, 1fr)',
+    gap: '6px',
+  },
+  durationBtn: {
+    padding: '8px 4px',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    color: '#ccc',
+    border: '2px solid transparent',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: 'bold',
+    transition: 'all 0.15s',
+  },
+  durationBtnActive: {
+    backgroundColor: 'rgba(39, 174, 96, 0.3)',
+    borderColor: '#27ae60',
+    color: '#fff',
   },
   info: {
     backgroundColor: 'rgba(255,255,255,0.05)',

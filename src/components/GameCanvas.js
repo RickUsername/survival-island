@@ -153,7 +153,7 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
     ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE);
   }, []);
 
-  // Spielerin zeichnen (blonde Frau, hellblauer Pulli, dunkle Hose, schwarze Schuhe)
+  // Spielerin zeichnen (blonde Frau, blau-gelb Gradient-Pulli, schwarze Leggings, barfuß)
   const drawPlayer = useCallback((ctx, camera) => {
     if (!gameState) return;
 
@@ -163,142 +163,279 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
     // Lauf-Animation
     const isMoving = gameState.player.targetX !== undefined || gameState.player.moving;
     const walkCycle = isMoving ? Math.sin(Date.now() / 120) : 0;
-    const legSwing = walkCycle * 4;
-    const armSwing = walkCycle * 3;
+    const legSwing = walkCycle * 5;
+    const kneeSwing = walkCycle * 2.5;
+    const armSwing = walkCycle * 4;
     const bodyBob = Math.abs(walkCycle) * 1.5;
+    const bodyLean = isMoving ? 1.5 : 0; // Leichte Vorneigung beim Laufen
 
-    // Basis-Koordinaten (Figur ist ~36px hoch, Mittelpunkt ist bei Hüfte)
-    const headY = py - 14 - bodyBob;
-    const bodyY = py - 4 - bodyBob;
-    const hipY = py + 4 - bodyBob;
-    const feetY = py + 18;
+    // Basis-Koordinaten (Figur ist ~40px hoch, Mittelpunkt bei Hüfte)
+    const headY = py - 16 - bodyBob;
+    const neckY = py - 8 - bodyBob;
+    const shoulderY = py - 6 - bodyBob;
+    const waistY = py + 2 - bodyBob;
+    const hipY = py + 5 - bodyBob;
+    const kneeY = py + 13;
+    const feetY = py + 20;
 
-    // Schatten
-    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    // Schatten (wird größer/kleiner mit Bewegung)
+    const shadowScale = isMoving ? 0.85 : 1;
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
     ctx.beginPath();
-    ctx.ellipse(px, feetY + 2, 10, 4, 0, 0, Math.PI * 2);
+    ctx.ellipse(px + bodyLean, feetY + 2, 11 * shadowScale, 4 * shadowScale, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // === Beine (dunkelblaue Hose) ===
-    ctx.strokeStyle = '#1a3a5c';
-    ctx.lineWidth = 5;
+    // === Haare hinten (Langhaar, fällt über Rücken) ===
+    ctx.fillStyle = '#E8C84A';
+    ctx.beginPath();
+    ctx.ellipse(px - 1, headY + 8, 7, 14, -0.05, 0, Math.PI * 2);
+    ctx.fill();
+    // Haarsträhnen-Highlight hinten
+    ctx.fillStyle = '#F5D76E';
+    ctx.beginPath();
+    ctx.ellipse(px + 1, headY + 6, 5, 11, 0.05, 0, Math.PI * 2);
+    ctx.fill();
+
+    // === Beine (schwarze Leggings) ===
     ctx.lineCap = 'round';
-    // Linkes Bein
+    ctx.lineJoin = 'round';
+
+    // Linkes Bein (Oberschenkel + Unterschenkel)
+    ctx.strokeStyle = '#1a1a2e';
+    ctx.lineWidth = 5.5;
+    // Oberschenkel
     ctx.beginPath();
     ctx.moveTo(px - 4, hipY);
-    ctx.lineTo(px - 4 - legSwing, feetY - 4);
+    ctx.lineTo(px - 4 - kneeSwing, kneeY);
     ctx.stroke();
-    // Rechtes Bein
+    // Unterschenkel
+    ctx.strokeStyle = '#1a1a2e';
+    ctx.lineWidth = 4.5;
+    ctx.beginPath();
+    ctx.moveTo(px - 4 - kneeSwing, kneeY);
+    ctx.lineTo(px - 4 - legSwing, feetY - 2);
+    ctx.stroke();
+
+    // Rechtes Bein (Oberschenkel + Unterschenkel)
+    ctx.strokeStyle = '#1a1a2e';
+    ctx.lineWidth = 5.5;
     ctx.beginPath();
     ctx.moveTo(px + 4, hipY);
-    ctx.lineTo(px + 4 + legSwing, feetY - 4);
+    ctx.lineTo(px + 4 + kneeSwing, kneeY);
+    ctx.stroke();
+    ctx.lineWidth = 4.5;
+    ctx.beginPath();
+    ctx.moveTo(px + 4 + kneeSwing, kneeY);
+    ctx.lineTo(px + 4 + legSwing, feetY - 2);
     ctx.stroke();
 
-    // === Schuhe (schwarz) ===
-    ctx.fillStyle = '#1a1a1a';
+    // === Barfuß (hautfarbene Füße) ===
+    ctx.fillStyle = '#F5C1A8';
+    // Linker Fuß
     ctx.beginPath();
-    ctx.ellipse(px - 4 - legSwing, feetY - 2, 4, 3, 0, 0, Math.PI * 2);
+    ctx.ellipse(px - 4 - legSwing + 1, feetY, 4, 2.5, 0.1, 0, Math.PI * 2);
+    ctx.fill();
+    // Rechter Fuß
+    ctx.beginPath();
+    ctx.ellipse(px + 4 + legSwing + 1, feetY, 4, 2.5, -0.1, 0, Math.PI * 2);
+    ctx.fill();
+    // Fußrücken-Schattierung
+    ctx.fillStyle = '#E8AD90';
+    ctx.beginPath();
+    ctx.ellipse(px - 4 - legSwing, feetY + 0.5, 2.5, 1.5, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.ellipse(px + 4 + legSwing, feetY - 2, 4, 3, 0, 0, Math.PI * 2);
+    ctx.ellipse(px + 4 + legSwing, feetY + 0.5, 2.5, 1.5, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // === Körper / Pulli (hellblau) ===
-    ctx.fillStyle = '#7EC8E3';
+    // === Körper / Pulli (blau-zu-gelb Gradient) ===
+    const pulliGrad = ctx.createLinearGradient(px, shoulderY - 2, px, hipY + 3);
+    pulliGrad.addColorStop(0, '#5BA4D9');    // Oben: Kräftiges Blau
+    pulliGrad.addColorStop(0.35, '#6DB8D6');  // Mitte-oben: Hellblau
+    pulliGrad.addColorStop(0.7, '#A8CD5A');   // Mitte-unten: Grüngelb
+    pulliGrad.addColorStop(1, '#C8D94A');      // Unten: Gelb-Grün
+
+    // Pulli-Torso (leicht tailliert)
+    ctx.fillStyle = pulliGrad;
     ctx.beginPath();
-    ctx.moveTo(px - 9, bodyY - 4);
-    ctx.lineTo(px + 9, bodyY - 4);
-    ctx.lineTo(px + 7, hipY + 2);
-    ctx.lineTo(px - 7, hipY + 2);
+    ctx.moveTo(px - 9, shoulderY);          // Linke Schulter
+    ctx.lineTo(px + 9, shoulderY);          // Rechte Schulter
+    ctx.lineTo(px + 8, waistY);             // Rechte Taille (etwas schmaler)
+    ctx.lineTo(px + 7.5, hipY + 2);         // Rechte Hüfte
+    ctx.lineTo(px - 7.5, hipY + 2);         // Linke Hüfte
+    ctx.lineTo(px - 8, waistY);             // Linke Taille
     ctx.closePath();
     ctx.fill();
-    // Pulli-Kragen (etwas dunkler)
-    ctx.fillStyle = '#6BB8D6';
+
+    // Pulli-Saum (unterer Rand, etwas dunkler)
+    ctx.strokeStyle = '#B8C840';
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.ellipse(px, bodyY - 4, 6, 2.5, 0, 0, Math.PI * 2);
+    ctx.moveTo(px - 7.5, hipY + 2);
+    ctx.lineTo(px + 7.5, hipY + 2);
+    ctx.stroke();
+
+    // Rundkragen
+    ctx.fillStyle = '#4E96C8';
+    ctx.beginPath();
+    ctx.ellipse(px, shoulderY, 6, 2.5, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // === Arme (Pulli-Ärmel hellblau + Haut) ===
-    ctx.strokeStyle = '#7EC8E3';
-    ctx.lineWidth = 4;
+    // === Arme (Pulli-Ärmel mit Gradient + Haut-Hände) ===
     // Linker Arm
+    const leftArmGrad = ctx.createLinearGradient(px - 9, shoulderY, px - 13 + armSwing, hipY);
+    leftArmGrad.addColorStop(0, '#5BA4D9');
+    leftArmGrad.addColorStop(0.6, '#8BBD5C');
+    leftArmGrad.addColorStop(1, '#A8CD5A');
+    ctx.strokeStyle = leftArmGrad;
+    ctx.lineWidth = 4.5;
     ctx.beginPath();
-    ctx.moveTo(px - 9, bodyY - 1);
-    ctx.lineTo(px - 13 + armSwing, hipY - 2);
+    ctx.moveTo(px - 9, shoulderY + 2);
+    ctx.lineTo(px - 13 + armSwing, hipY);
     ctx.stroke();
+
     // Rechter Arm
+    const rightArmGrad = ctx.createLinearGradient(px + 9, shoulderY, px + 13 - armSwing, hipY);
+    rightArmGrad.addColorStop(0, '#5BA4D9');
+    rightArmGrad.addColorStop(0.6, '#8BBD5C');
+    rightArmGrad.addColorStop(1, '#A8CD5A');
+    ctx.strokeStyle = rightArmGrad;
+    ctx.lineWidth = 4.5;
     ctx.beginPath();
-    ctx.moveTo(px + 9, bodyY - 1);
-    ctx.lineTo(px + 13 - armSwing, hipY - 2);
+    ctx.moveTo(px + 9, shoulderY + 2);
+    ctx.lineTo(px + 13 - armSwing, hipY);
     ctx.stroke();
+
     // Hände (Hautfarbe)
-    ctx.fillStyle = '#FDBCB4';
+    ctx.fillStyle = '#F5C1A8';
     ctx.beginPath();
-    ctx.arc(px - 13 + armSwing, hipY - 1, 2.5, 0, Math.PI * 2);
+    ctx.arc(px - 13 + armSwing, hipY + 1, 2.8, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.arc(px + 13 - armSwing, hipY - 1, 2.5, 0, Math.PI * 2);
+    ctx.arc(px + 13 - armSwing, hipY + 1, 2.8, 0, Math.PI * 2);
     ctx.fill();
 
     // === Kopf ===
     // Hals
-    ctx.fillStyle = '#FDBCB4';
-    ctx.fillRect(px - 2.5, bodyY - 7, 5, 4);
-    // Kopf (Hautfarbe)
-    ctx.fillStyle = '#FDBCB4';
+    ctx.fillStyle = '#F5C1A8';
+    ctx.fillRect(px - 2.5, neckY - 1, 5, 5);
+
+    // Kopf (Hautfarbe, leicht oval)
+    ctx.fillStyle = '#F5C1A8';
     ctx.beginPath();
-    ctx.arc(px, headY, 8, 0, Math.PI * 2);
+    ctx.ellipse(px, headY, 8.5, 9, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // === Haare (blond) ===
-    ctx.fillStyle = '#F5D060';
-    // Haupthaar (oben)
+    // === Haare (blond, voluminös, gewellt) ===
+    // Haupthaar-Volumen (Oberkopf)
+    ctx.fillStyle = '#E8C84A';
     ctx.beginPath();
-    ctx.arc(px, headY - 1, 9, Math.PI, 2 * Math.PI);
+    ctx.ellipse(px, headY - 3, 10.5, 7, 0, 0, Math.PI * 2);
     ctx.fill();
-    // Pony (Stirn)
+
+    // Stirn-Pony (leicht seitlich)
+    ctx.fillStyle = '#F0D45A';
     ctx.beginPath();
-    ctx.ellipse(px, headY - 4, 9, 4, 0, 0, Math.PI * 2);
+    ctx.ellipse(px + 1, headY - 5, 9.5, 5, 0.05, 0, Math.PI * 2);
     ctx.fill();
-    // Seitliches Haar links
+
+    // Seitliches Haar links (lang, gewellt)
+    ctx.fillStyle = '#E8C84A';
     ctx.beginPath();
-    ctx.ellipse(px - 8, headY + 2, 3, 7, 0.15, 0, Math.PI * 2);
+    ctx.ellipse(px - 9, headY + 3, 3.5, 9, 0.15, 0, Math.PI * 2);
     ctx.fill();
-    // Seitliches Haar rechts
+    // Strähne links unten
+    ctx.fillStyle = '#D4B83E';
     ctx.beginPath();
-    ctx.ellipse(px + 8, headY + 2, 3, 7, -0.15, 0, Math.PI * 2);
+    ctx.ellipse(px - 8, headY + 10, 2.5, 5, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Seitliches Haar rechts (lang, gewellt)
+    ctx.fillStyle = '#E8C84A';
+    ctx.beginPath();
+    ctx.ellipse(px + 9, headY + 3, 3.5, 9, -0.15, 0, Math.PI * 2);
+    ctx.fill();
+    // Strähne rechts unten
+    ctx.fillStyle = '#D4B83E';
+    ctx.beginPath();
+    ctx.ellipse(px + 8, headY + 10, 2.5, 5, -0.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Haar-Highlight (Glanzpunkt oben)
+    ctx.fillStyle = 'rgba(255, 235, 140, 0.4)';
+    ctx.beginPath();
+    ctx.ellipse(px + 2, headY - 6, 4, 2.5, -0.2, 0, Math.PI * 2);
     ctx.fill();
 
     // === Gesicht ===
-    // Augen
+    // Augen (leicht mandelförmig)
     ctx.fillStyle = '#fff';
     ctx.beginPath();
-    ctx.ellipse(px - 3, headY, 2.5, 2.8, 0, 0, Math.PI * 2);
+    ctx.ellipse(px - 3, headY + 0.5, 2.5, 2.8, -0.05, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.ellipse(px + 3, headY, 2.5, 2.8, 0, 0, Math.PI * 2);
+    ctx.ellipse(px + 3, headY + 0.5, 2.5, 2.8, 0.05, 0, Math.PI * 2);
     ctx.fill();
-    // Pupillen (blau)
-    ctx.fillStyle = '#4A90D9';
+
+    // Iris (blaugrau)
+    ctx.fillStyle = '#5A9EC8';
     ctx.beginPath();
-    ctx.arc(px - 2.5, headY + 0.5, 1.5, 0, Math.PI * 2);
+    ctx.arc(px - 2.5, headY + 0.8, 1.8, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.arc(px + 3.5, headY + 0.5, 1.5, 0, Math.PI * 2);
+    ctx.arc(px + 3.5, headY + 0.8, 1.8, 0, Math.PI * 2);
     ctx.fill();
-    // Mund (kleines Lächeln)
+
+    // Pupillen (dunkel)
+    ctx.fillStyle = '#2a4a6a';
+    ctx.beginPath();
+    ctx.arc(px - 2.3, headY + 1, 0.9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(px + 3.7, headY + 1, 0.9, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Augen-Glanzpunkt
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(px - 3, headY + 0.2, 0.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(px + 3, headY + 0.2, 0.6, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Augenbrauen (fein, blond)
+    ctx.strokeStyle = '#C8A840';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.arc(px - 3, headY - 2, 3, 1.1 * Math.PI, 1.85 * Math.PI);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(px + 3, headY - 2, 3, 1.15 * Math.PI, 1.9 * Math.PI);
+    ctx.stroke();
+
+    // Nase (dezent)
+    ctx.strokeStyle = '#E0A890';
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    ctx.moveTo(px, headY + 1.5);
+    ctx.lineTo(px - 0.5, headY + 3.5);
+    ctx.stroke();
+
+    // Mund (freundliches Lächeln)
     ctx.strokeStyle = '#D4837A';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.arc(px, headY + 4, 2.5, 0.15 * Math.PI, 0.85 * Math.PI);
+    ctx.arc(px, headY + 5, 2.5, 0.15 * Math.PI, 0.85 * Math.PI);
     ctx.stroke();
-    // Wangen (leichtes Rouge)
-    ctx.fillStyle = 'rgba(255, 150, 150, 0.2)';
+
+    // Wangen (sanftes Rouge)
+    ctx.fillStyle = 'rgba(255, 140, 140, 0.18)';
     ctx.beginPath();
-    ctx.arc(px - 5, headY + 2, 2, 0, Math.PI * 2);
+    ctx.arc(px - 5.5, headY + 2.5, 2.2, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.arc(px + 5, headY + 2, 2, 0, Math.PI * 2);
+    ctx.arc(px + 5.5, headY + 2.5, 2.2, 0, Math.PI * 2);
     ctx.fill();
   }, [gameState]);
 

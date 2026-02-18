@@ -2,34 +2,91 @@
 // Sammelreisen-Bildschirm
 // ============================================
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   getElapsedGatheringTime,
   formatGatheringTime,
   isGatheringComplete,
+  getTargetDuration,
 } from '../systems/GatheringSystem';
-import { BIOMES, MAX_GATHERING_DURATION } from '../utils/constants';
+import { BIOMES } from '../utils/constants';
 import NeedsBar from './NeedsBar';
+
+// Wecker-Sound via Web Audio API (3 aufsteigende Töne)
+function playAlarmSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const frequencies = [523.25, 659.25, 783.99]; // C5, E5, G5
+    const now = ctx.currentTime;
+
+    frequencies.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, now + i * 0.3);
+      gain.gain.linearRampToValueAtTime(0.3, now + i * 0.3 + 0.05);
+      gain.gain.linearRampToValueAtTime(0, now + i * 0.3 + 0.25);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + i * 0.3);
+      osc.stop(now + i * 0.3 + 0.3);
+    });
+
+    // Zweite Welle (Wiederholung nach 1s)
+    setTimeout(() => {
+      try {
+        const ctx2 = new (window.AudioContext || window.webkitAudioContext)();
+        const now2 = ctx2.currentTime;
+        frequencies.forEach((freq, i) => {
+          const osc = ctx2.createOscillator();
+          const gain = ctx2.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0, now2 + i * 0.3);
+          gain.gain.linearRampToValueAtTime(0.35, now2 + i * 0.3 + 0.05);
+          gain.gain.linearRampToValueAtTime(0, now2 + i * 0.3 + 0.25);
+          osc.connect(gain);
+          gain.connect(ctx2.destination);
+          osc.start(now2 + i * 0.3);
+          osc.stop(now2 + i * 0.3 + 0.3);
+        });
+      } catch (e) { /* ignore */ }
+    }, 1000);
+  } catch (e) {
+    // Web Audio API nicht verfügbar
+  }
+}
 
 export default function GatheringScreen({
   gathering,
   needs,
+  activeTopicName,
   onPause,
   onResume,
   onCancel,
   onAutoReturn,
 }) {
   const [elapsed, setElapsed] = useState(0);
+  const alarmPlayedRef = useRef(false);
 
   // Timer aktualisieren
+  useEffect(() => {
+    alarmPlayedRef.current = false; // Reset bei neuer Reise
+  }, [gathering?.startTime]);
+
   useEffect(() => {
     const interval = setInterval(() => {
       if (gathering) {
         const time = getElapsedGatheringTime(gathering);
         setElapsed(time);
 
-        // Auto-Rückkehr bei maximaler Zeit
+        // Auto-Rückkehr bei Zielzeit
         if (isGatheringComplete(gathering)) {
+          if (!alarmPlayedRef.current) {
+            alarmPlayedRef.current = true;
+            playAlarmSound();
+          }
           onAutoReturn();
         }
       }
@@ -42,7 +99,9 @@ export default function GatheringScreen({
 
   const biome = Object.values(BIOMES).find(b => b.direction === gathering.biome);
   const isPaused = gathering.status === 'paused';
-  const progress = (elapsed / MAX_GATHERING_DURATION) * 100;
+  const targetDuration = getTargetDuration(gathering);
+  const progress = (elapsed / targetDuration) * 100;
+  const remaining = Math.max(0, targetDuration - elapsed);
 
   return (
     <div style={styles.container}>
@@ -60,14 +119,27 @@ export default function GatheringScreen({
         <span style={styles.biomeName}>{biome?.name || gathering.biome}</span>
       </div>
 
+      {/* Aktives Lernthema Badge */}
+      {activeTopicName && (
+        <div style={styles.topicBadge}>
+          <span style={styles.topicIcon}>📖</span>
+          <span style={styles.topicText}>{activeTopicName}</span>
+        </div>
+      )}
+
       {/* Timer */}
       <div style={styles.timerContainer}>
         <div style={styles.timer}>
           {formatGatheringTime(elapsed)}
         </div>
         <div style={styles.maxTime}>
-          / {formatGatheringTime(MAX_GATHERING_DURATION)}
+          / {formatGatheringTime(targetDuration)}
         </div>
+      </div>
+
+      {/* Countdown */}
+      <div style={styles.countdown}>
+        Noch {formatGatheringTime(remaining)}
       </div>
 
       {/* Fortschrittsbalken */}
@@ -166,6 +238,24 @@ const styles = {
     fontSize: '28px',
     fontWeight: 'bold',
   },
+  topicBadge: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    backgroundColor: 'rgba(139, 115, 85, 0.3)',
+    border: '1px solid #8B7355',
+    borderRadius: '20px',
+    padding: '6px 16px',
+    zIndex: 1,
+  },
+  topicIcon: {
+    fontSize: '16px',
+  },
+  topicText: {
+    color: '#8B7355',
+    fontSize: '14px',
+    fontWeight: 'bold',
+  },
   timerContainer: {
     display: 'flex',
     alignItems: 'baseline',
@@ -182,6 +272,12 @@ const styles = {
     fontSize: '20px',
     color: '#666',
     fontFamily: 'monospace',
+  },
+  countdown: {
+    fontSize: '16px',
+    color: '#f59e0b',
+    fontFamily: 'monospace',
+    zIndex: 1,
   },
   progressContainer: {
     width: '80%',
