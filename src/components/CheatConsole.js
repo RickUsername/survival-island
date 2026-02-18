@@ -59,6 +59,8 @@ const SPECIAL_CHEATS = {
   'kristallaxt': { type: 'add_tool', value: 'crystal_axe', label: '🪓 Kristallaxt erhalten' },
   'steinaxt': { type: 'add_tool', value: 'stone_axe', label: '🪓 Steinaxt erhalten' },
   'holzaxt': { type: 'add_tool', value: 'wood_axe', label: '🪓 Holzaxt erhalten' },
+  // Inventar leeren
+  'inventar0': { type: 'clear_inventory', label: '🗑️ Inventar & Werkzeuge geleert' },
   // Cheat-Liste anzeigen
   'liste': { type: 'show_list', label: 'Cheat-Liste geöffnet' },
 };
@@ -86,7 +88,26 @@ function parseCheatCode(code) {
   const germanName = match[1];
   const amount = parseInt(match[2], 10);
 
-  if (amount <= 0 || isNaN(amount)) return null;
+  if (isNaN(amount)) return null;
+
+  // Bedürfnis-Cheats: essen/wasser/stimmung + Wert (0-100)
+  const NEED_CHEATS = {
+    'essen': { need: 'hunger', emoji: '🍖' },
+    'wasser': { need: 'thirst', emoji: '💧' },
+    'stimmung': { need: 'mood', emoji: '😊' },
+  };
+  const needCheat = NEED_CHEATS[germanName];
+  if (needCheat && amount >= 0 && amount <= 100) {
+    return {
+      type: 'set_need',
+      need: needCheat.need,
+      value: amount,
+      label: `${needCheat.emoji} ${germanName.charAt(0).toUpperCase() + germanName.slice(1)} auf ${amount}%`,
+      cheatType: 'special',
+    };
+  }
+
+  if (amount <= 0) return null;
 
   // Deutschen Namen auf Item-ID mappen
   const itemId = GERMAN_NAME_TO_ID[germanName];

@@ -956,6 +956,24 @@ export default function Game() {
         }));
         setTimeout(() => manualSave(), 0);
       }
+    } else if (command.type === 'clear_inventory') {
+      // Inventar und Werkzeuge leeren
+      setGameState(prev => ({
+        ...prev,
+        inventory: {},
+        tools: [],
+      }));
+      setTimeout(() => manualSave(), 0);
+    } else if (command.type === 'set_need') {
+      // Bedürfniswert setzen (essen/wasser/stimmung 0-100)
+      setGameState(prev => ({
+        ...prev,
+        needs: {
+          ...prev.needs,
+          [command.need]: command.value,
+        },
+      }));
+      setTimeout(() => manualSave(), 0);
     } else if (command.type === 'show_list') {
       // Cheat-Liste anzeigen
       setShowCheatList(true);

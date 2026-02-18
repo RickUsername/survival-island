@@ -7,11 +7,13 @@ import { loadGame, saveGame, getDefaultGameState, resetGame } from '../systems/S
 import { updateNeeds, calculateOfflineNeeds, checkDeath, updateWaterCollector } from '../systems/NeedsSystem';
 import { checkWeatherUpdate, getCurrentWeather } from '../systems/WeatherSystem';
 import { checkVacationExpiry } from '../systems/VacationSystem';
-import { SAVE_INTERVAL, TILE_SIZE, COLLISION_TILES, MAP_COLS, MAP_ROWS } from '../utils/constants';
-import { updateAnimals, updateAnimalHunger, checkTreeFruitDrop, checkTreeSeedDrop } from '../systems/AnimalSystem';
+import { SAVE_INTERVAL, TILE_SIZE, COLLISION_TILES, MAP_COLS, MAP_ROWS, MAX_GATHERING_DURATION, FOOD_SPOIL_TIME, TILE_TYPES, HUNGER_DRAIN_PER_SEC, THIRST_DRAIN_PER_SEC, MOOD_DRAIN_PER_SEC, SHELTER_MOOD_MODIFIERS, WEATHER_TYPES } from '../utils/constants';
+import { updateAnimals, updateAnimalHunger, checkTreeFruitDrop, checkTreeSeedDrop, checkAnimalSpawn } from '../systems/AnimalSystem';
+import { finishGathering, getElapsedGatheringTime } from '../systems/GatheringSystem';
+import { drainToolDurability } from '../systems/ToolSystem';
+import { isWaterCollectorActive } from '../systems/NeedsSystem';
 import homeMap, { EXIT_ZONES, TREE_POSITION } from '../data/homeMap';
 import items from '../data/items';
-import { FOOD_SPOIL_TIME, TILE_TYPES } from '../utils/constants';
 
 // --- Unkraut-Konstanten ---
 const WEED_SPAWN_INTERVAL = 8 * 60 * 60 * 1000; // Alle 8 Stunden
@@ -148,7 +150,30 @@ export default function useGameLoop() {
 
     // Offline-Zeit für Bedürfnisse nachrechnen
     if (!state.vacation.isActive) {
-      state.needs = calculateOfflineNeeds(state);
+      if (state.gathering) {
+        // Wanderung war aktiv: Mood-Drain nur für die Zeit NACH der Wanderung berechnen
+        // Während der Wanderung kein Mood-Drain (Charakter ist beschäftigt & aktiv)
+        const gatheringElapsed = getElapsedGatheringTime(state.gathering); // ms
+        const totalOfflineSec = (Date.now() - state.lastUpdate) / 1000;
+        const gatheringSec = Math.min(gatheringElapsed / 1000, totalOfflineSec);
+        const afterGatheringSec = Math.max(0, totalOfflineSec - gatheringSec);
+
+        // Hunger/Durst laufen die gesamte Offline-Zeit
+        const needs = { ...state.needs };
+        needs.hunger = Math.max(0, needs.hunger - HUNGER_DRAIN_PER_SEC * totalOfflineSec);
+        if (isWaterCollectorActive(state.buildings)) {
+          needs.thirst = Math.min(100, needs.thirst + (5 / 3600) * totalOfflineSec);
+        } else {
+          needs.thirst = Math.max(0, needs.thirst - THIRST_DRAIN_PER_SEC * totalOfflineSec);
+        }
+        // Mood-Drain nur für die Zeit nach der Wanderung
+        const shelterMod = SHELTER_MOOD_MODIFIERS[state.buildings.shelterLevel] || SHELTER_MOOD_MODIFIERS[0];
+        const moodModifier = state.weather === WEATHER_TYPES.RAINY ? shelterMod.rain : shelterMod.sun;
+        needs.mood = Math.max(0, needs.mood - MOOD_DRAIN_PER_SEC * moodModifier * afterGatheringSec);
+        state.needs = needs;
+      } else {
+        state.needs = calculateOfflineNeeds(state);
+      }
 
       // Tod-Check nach Offline-Berechnung
       if (checkDeath(state.needs)) {
@@ -156,6 +181,56 @@ export default function useGameLoop() {
         if (state.needs.hunger <= 0) setDeathCause('hunger');
         else if (state.needs.thirst <= 0) setDeathCause('thirst');
         else setDeathCause('mood');
+      }
+    }
+
+    // Offline Sammelreise abschließen (wenn Reise abgelaufen ist)
+    if (!state.vacation.isActive && state.gathering) {
+      const elapsed = getElapsedGatheringTime(state.gathering);
+      if (elapsed >= MAX_GATHERING_DURATION) {
+        // Reise war voll abgelaufen → Loot berechnen und anzeigen
+        const result = finishGathering(state.gathering, state.tools || []);
+
+        // Items ins Inventar
+        const newInventory = { ...state.inventory };
+        for (const item of result.items) {
+          if (!newInventory[item.itemId]) {
+            newInventory[item.itemId] = { amount: 0, collectedAt: Date.now() };
+          }
+          newInventory[item.itemId] = {
+            ...newInventory[item.itemId],
+            amount: newInventory[item.itemId].amount + item.amount,
+          };
+        }
+        state.inventory = newInventory;
+
+        // Werkzeug-Haltbarkeit
+        state.tools = drainToolDurability(state.tools || [], result.duration, result.usedToolTypes || []);
+
+        // Stimmung
+        const newNeeds = { ...state.needs };
+        newNeeds.mood = Math.min(100, newNeeds.mood + result.moodGain);
+        state.needs = newNeeds;
+
+        // Biom-Besuche
+        const newBiomeVisits = { ...(state.biomeVisits || {}) };
+        const tripBiome = state.gathering.biome;
+        newBiomeVisits[tripBiome] = (newBiomeVisits[tripBiome] || 0) + 1;
+        state.biomeVisits = newBiomeVisits;
+
+        // Tier-Spawn prüfen
+        const existingAnimals = state.animals || [];
+        const newAnimal = checkAnimalSpawn(result.duration, tripBiome, newBiomeVisits, existingAnimals);
+        if (newAnimal) {
+          state.animals = [...existingAnimals, newAnimal];
+          result.newAnimal = newAnimal;
+        }
+
+        // Reise beenden
+        state.gathering = null;
+
+        // Loot-Screen nach dem Laden anzeigen (via setTimeout damit State gesetzt ist)
+        setTimeout(() => setShowLoot(result), 100);
       }
     }
 
