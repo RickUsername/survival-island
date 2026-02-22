@@ -37,27 +37,73 @@
     <div id="root"></div>
     <script>
       // Service Worker registrieren + automatisch Updates laden
+      // Robust für installierte Desktop-PWA (kein manuelles Reload möglich)
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('%PUBLIC_URL%/sw.js')
-            .then(reg => {
-              console.log('SW registriert:', reg.scope);
-              // Alle 60 Sekunden nach Updates prüfen
-              setInterval(() => reg.update(), 60000);
-              // Wenn ein neuer SW wartet → sofort aktivieren und Seite neu laden
-              reg.addEventListener('updatefound', () => {
-                const newWorker = reg.installing;
-                if (newWorker) {
-                  newWorker.addEventListener('statechange', () => {
-                    if (newWorker.state === 'activated') {
-                      // Seite neu laden um neue Version zu bekommen
-                      window.location.reload();
+          var refreshing = false;
+
+          // 1) Controller-Wechsel erkennen: Wenn ein NEUER SW die Kontrolle übernimmt → Reload
+          //    Das ist der zuverlässigste Weg für PWA-Updates
+          navigator.serviceWorker.addEventListener('controllerchange', function() {
+            if (refreshing) return;
+            refreshing = true;
+            console.log('[PWA] Neuer Service Worker aktiv — lade neu...');
+            window.location.reload();
+          });
+
+          // 2) Nachrichten vom SW empfangen (z.B. SW_UPDATED)
+          navigator.serviceWorker.addEventListener('message', function(event) {
+            if (event.data && event.data.type === 'SW_UPDATED') {
+              console.log('[PWA] SW Update-Nachricht erhalten, Version:', event.data.version);
+              // Reload passiert bereits über controllerchange
+            }
+          });
+
+          // 3) Service Worker registrieren
+          navigator.serviceWorker.register('%PUBLIC_URL%/sw.js', {
+            // updateViaCache: 'none' → Browser prüft IMMER den Server für sw.js
+            // Verhindert dass GitHub Pages Cache-Header die sw.js veraltert servieren
+            updateViaCache: 'none'
+          })
+            .then(function(reg) {
+              console.log('[PWA] SW registriert:', reg.scope);
+
+              // Alle 30 Sekunden nach Updates prüfen (wichtig für Desktop-PWA!)
+              setInterval(function() {
+                reg.update().catch(function() {});
+              }, 30000);
+
+              // Wenn ein neuer SW gefunden wird
+              reg.addEventListener('updatefound', function() {
+                var newWorker = reg.installing;
+                if (!newWorker) return;
+                console.log('[PWA] Neuer SW wird installiert...');
+
+                newWorker.addEventListener('statechange', function() {
+                  console.log('[PWA] Neuer SW State:', newWorker.state);
+                  // Wenn der neue SW installed ist und auf Aktivierung wartet
+                  if (newWorker.state === 'installed') {
+                    if (navigator.serviceWorker.controller) {
+                      // Es gibt einen alten SW → Update verfügbar!
+                      // skipWaiting wurde bereits in sw.js aufgerufen,
+                      // aber sicherheitshalber auch von hier triggern
+                      console.log('[PWA] Update verfügbar — aktiviere neuen SW...');
+                      newWorker.postMessage('skipWaiting');
+                    } else {
+                      // Erstinstallation, kein Reload nötig
+                      console.log('[PWA] Erstinstallation abgeschlossen');
                     }
-                  });
-                }
+                  }
+                });
               });
+
+              // Falls bereits ein wartender SW existiert (z.B. von vorherigem Check)
+              if (reg.waiting) {
+                console.log('[PWA] Wartender SW gefunden — aktiviere...');
+                reg.waiting.postMessage('skipWaiting');
+              }
             })
-            .catch(err => console.log('SW Fehler:', err));
+            .catch(function(err) { console.log('[PWA] SW Fehler:', err); });
         });
       }
     </script>

@@ -3,16 +3,15 @@
 // Cache-Version wird bei jedem Deploy erhöht
 // ============================================
 
-const CACHE_VERSION = 3;
+const CACHE_VERSION = 4;
 const CACHE_NAME = `survival-island-v${CACHE_VERSION}`;
 
-// Bei Installation: Nur Basis-Ressourcen cachen, sofort aktivieren
+// Bei Installation: Nur Manifest cachen (NICHT index.html — die soll immer frisch sein)
 self.addEventListener('install', (event) => {
+  console.log('[SW] Install v' + CACHE_VERSION);
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll([
-        './',
-        './index.html',
         './manifest.json',
       ]);
     })
@@ -21,19 +20,31 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
-// Bei Aktivierung: ALLE alten Caches löschen
+// Bei Aktivierung: ALLE alten Caches löschen + alle Clients übernehmen
 self.addEventListener('activate', (event) => {
+  console.log('[SW] Activate v' + CACHE_VERSION);
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames
           .filter((name) => name !== CACHE_NAME)
-          .map((name) => caches.delete(name))
+          .map((name) => {
+            console.log('[SW] Lösche alten Cache:', name);
+            return caches.delete(name);
+          })
       );
+    }).then(() => {
+      // Sofort alle offenen Tabs/Fenster übernehmen
+      return self.clients.claim();
+    }).then(() => {
+      // Alle Clients informieren dass neuer SW aktiv ist
+      return self.clients.matchAll({ type: 'window' }).then((clients) => {
+        clients.forEach((client) => {
+          client.postMessage({ type: 'SW_UPDATED', version: CACHE_VERSION });
+        });
+      });
     })
   );
-  // Sofort alle offenen Tabs übernehmen
-  self.clients.claim();
 });
 
 // Netzwerk-Anfragen: Network-first für alles
@@ -48,12 +59,18 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Navigation-Requests (HTML-Seiten): Immer Netzwerk, Fallback auf Cache
+  // Navigation-Requests (HTML-Seiten): IMMER vom Netzwerk laden, nie cachen
+  // Das ist kritisch für PWA-Updates — die index.html muss immer frisch sein!
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request)
+      fetch(request, { cache: 'no-cache' })
         .catch(() => caches.match('./index.html'))
     );
+    return;
+  }
+
+  // sw.js selbst NIEMALS cachen (Browser-Standard, aber sicherheitshalber)
+  if (request.url.includes('sw.js')) {
     return;
   }
 
@@ -77,9 +94,16 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
-// Nachricht vom Client: Cache leeren und neu laden
+// Nachricht vom Client: skipWaiting oder Cache komplett leeren
 self.addEventListener('message', (event) => {
   if (event.data === 'skipWaiting') {
     self.skipWaiting();
+  }
+  if (event.data === 'clearCache') {
+    caches.keys().then((cacheNames) => {
+      return Promise.all(cacheNames.map((name) => caches.delete(name)));
+    }).then(() => {
+      console.log('[SW] Alle Caches gelöscht');
+    });
   }
 });
