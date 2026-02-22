@@ -3,7 +3,7 @@
 // Cache-Version wird bei jedem Deploy erhöht
 // ============================================
 
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 const CACHE_NAME = `survival-island-v${CACHE_VERSION}`;
 
 // Bei Installation: Nur Basis-Ressourcen cachen, sofort aktivieren

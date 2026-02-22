@@ -232,9 +232,53 @@ export default function Game() {
       }
     });
 
+    // Visit-End: Ei-Belohnung wenn Besuch endet (einmal pro Freund)
+    mp.setVisitEndCallback((partnerId) => {
+      if (!partnerId) return;
+
+      // Prüfen ob Ei schon erhalten BEVOR State geändert wird (für Toast)
+      const currentState = gameStateRef.current;
+      const alreadyReceived = (currentState?.eggReceivedFrom || []).includes(partnerId);
+
+      setGameState(prev => {
+        if (!prev) return prev;
+
+        // Prüfen ob man von diesem Freund schon ein Ei bekommen hat
+        const eggReceivedFrom = prev.eggReceivedFrom || [];
+        if (eggReceivedFrom.includes(partnerId)) {
+          // Schon ein Ei von diesem Freund → kein weiteres
+          return prev;
+        }
+
+        // Neues Ei vergeben
+        const newInventory = { ...prev.inventory };
+        if (!newInventory.mysterious_egg) {
+          newInventory.mysterious_egg = { amount: 0, collectedAt: Date.now() };
+        }
+        newInventory.mysterious_egg = {
+          ...newInventory.mysterious_egg,
+          amount: newInventory.mysterious_egg.amount + 1,
+          collectedAt: newInventory.mysterious_egg.collectedAt || Date.now(),
+        };
+
+        // Freund als "Ei erhalten" markieren
+        const newEggReceivedFrom = [...eggReceivedFrom, partnerId];
+
+        return { ...prev, inventory: newInventory, eggReceivedFrom: newEggReceivedFrom };
+      });
+
+      // Toast nur zeigen wenn Ei tatsächlich NEU vergeben wurde
+      if (!alreadyReceived) {
+        setGameToast({ emoji: '🥚', message: 'Du hast ein Mysteriöses Ei als Besuchsgeschenk erhalten!' });
+      }
+
+      setTimeout(() => manualSave(), 0);
+    });
+
     return () => {
       mp.setVisitorActionCallback(null);
       mp.setTradeCompleteCallback(null);
+      mp.setVisitEndCallback(null);
     };
   }, [mp, setGameState, manualSave]);
 
@@ -277,17 +321,36 @@ export default function Game() {
     }
   }, [mp, gameState?.gathering]);
 
-  // Canvas-Größe an Fenster anpassen
+  // Canvas-Größe an Fenster anpassen (mit iOS visualViewport-Unterstützung)
   useEffect(() => {
     const updateSize = () => {
-      setCanvasSize({
-        width: window.innerWidth,
-        height: window.innerHeight,
-      });
+      // visualViewport ist auf iOS genauer (beachtet dynamische Safari-UI)
+      const vv = window.visualViewport;
+      const w = vv ? vv.width : window.innerWidth;
+      const h = vv ? vv.height : window.innerHeight;
+      // Schutz gegen 0-Werte bei iOS-Übergängen
+      if (w > 0 && h > 0) {
+        setCanvasSize({ width: Math.round(w), height: Math.round(h) });
+      }
     };
     updateSize();
-    window.addEventListener('resize', updateSize);
-    return () => window.removeEventListener('resize', updateSize);
+
+    // Debounced Resize (verhindert Layout-Thrashing auf iOS)
+    let resizeTimer;
+    const debouncedResize = () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(updateSize, 100);
+    };
+
+    window.addEventListener('resize', debouncedResize);
+    // visualViewport hat eigenes resize-Event (wichtig für iOS)
+    window.visualViewport?.addEventListener('resize', debouncedResize);
+
+    return () => {
+      clearTimeout(resizeTimer);
+      window.removeEventListener('resize', debouncedResize);
+      window.visualViewport?.removeEventListener('resize', debouncedResize);
+    };
   }, []);
 
   // Ausgang prüfen nach Bewegung
@@ -1854,14 +1917,14 @@ export default function Game() {
 const styles = {
   gameContainer: {
     width: '100vw',
-    height: '100vh',
+    height: '100dvh',
     overflow: 'hidden',
     position: 'relative',
     backgroundColor: '#0a0a1a',
   },
   loading: {
     width: '100vw',
-    height: '100vh',
+    height: '100dvh',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',

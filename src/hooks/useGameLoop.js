@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { loadGame, saveGame, getDefaultGameState, resetGame, saveGameWithCloud, loadGameWithCloud, resetGameWithCloud } from '../systems/SaveSystem';
+import { syncDown } from '../systems/CloudSaveService';
 import { useAuth } from '../contexts/AuthContext';
 import { updateNeeds, calculateOfflineNeeds, checkDeath, updateWaterCollector } from '../systems/NeedsSystem';
 import { checkWeatherUpdate, getCurrentWeather } from '../systems/WeatherSystem';
@@ -155,14 +156,33 @@ export default function useGameLoop() {
   useEffect(() => {
     const initGame = async () => {
     let state;
+
+    // Versuch 1: Cloud + localStorage Sync (mit verbessertem iOS-Fallback)
     try {
       state = await loadGameWithCloud(userId);
     } catch (err) {
-      console.warn('Cloud-Load fehlgeschlagen, nutze localStorage:', err);
+      console.warn('Cloud-Load fehlgeschlagen:', err);
     }
+
+    // Versuch 2: Nur localStorage
     if (!state) {
-      state = loadGame(userId); // Fallback: nur localStorage (user-spezifisch)
+      state = loadGame(userId);
     }
+
+    // Versuch 3 (bei eingeloggten Nutzern): Direkter Cloud-Download
+    // Fängt Fälle ab wo localStorage kaputt ist (iOS Private Mode etc.)
+    if (!state && userId) {
+      try {
+        const { success, data: cloudState } = await syncDown(userId);
+        if (success && cloudState) {
+          state = cloudState;
+          console.log('Spielstand direkt aus Cloud geladen (localStorage unavailable)');
+        }
+      } catch (err2) {
+        console.warn('Direkter Cloud-Load fehlgeschlagen:', err2);
+      }
+    }
+
     if (!state) {
       state = getDefaultGameState();
     }
@@ -493,14 +513,18 @@ export default function useGameLoop() {
     const saveInterval = setInterval(() => {
       const current = gameStateRef.current;
       if (current) {
-        saveGame(current, userIdRef.current);
+        const saved = saveGame(current, userIdRef.current);
+        // Wenn localStorage nicht funktioniert UND eingeloggt → Cloud als Fallback
+        if (!saved && userIdRef.current) {
+          saveGameWithCloud(current, userIdRef.current).catch(() => {});
+        }
       }
     }, SAVE_INTERVAL);
 
     return () => clearInterval(saveInterval);
   }, []); // Läuft einmalig, kein Neustart bei State-Änderung
 
-  // Cloud-Save – alle 60 Sekunden (nicht bei jedem Auto-Save!)
+  // Cloud-Save – alle 30 Sekunden (häufiger für iOS-Stabilität)
   useEffect(() => {
     if (!userId) return; // Nicht eingeloggt → kein Cloud-Sync
 
@@ -509,7 +533,7 @@ export default function useGameLoop() {
       if (current) {
         saveGameWithCloud(current, userIdRef.current).catch(() => {});
       }
-    }, 60 * 1000); // Alle 60 Sekunden
+    }, 30 * 1000); // Alle 30 Sekunden
 
     return () => clearInterval(cloudSaveInterval);
   }, [userId]);

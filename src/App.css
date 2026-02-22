@@ -10,7 +10,8 @@
 
 html, body, #root {
   width: 100%;
-  height: 100%;
+  height: 100dvh;
+  height: 100%; /* Fallback */
   overflow: hidden;
   background-color: #0a0a1a;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -69,9 +70,8 @@ button:active {
   }
 }
 
-/* Hochformat-Anpassungen (schmale Screens) */
-@media (max-width: 600px) and (orientation: portrait) {
-  /* Safe Area für iPhone-Notch */
+/* Safe Area für iPhone-Notch/Dynamic Island (alle Orientierungen) */
+@supports (padding-top: env(safe-area-inset-top)) {
   html, body, #root {
     padding-top: env(safe-area-inset-top);
     padding-bottom: env(safe-area-inset-bottom);

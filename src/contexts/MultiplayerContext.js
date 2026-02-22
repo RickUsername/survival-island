@@ -39,6 +39,12 @@ export function MultiplayerProvider({ children }) {
   const visitChannelRef = useRef(null);
   const messageSubscriptionRef = useRef(null);
   const positionIntervalRef = useRef(null);
+  const activeVisitRef = useRef(null);
+
+  // activeVisitRef synchron halten
+  useEffect(() => {
+    activeVisitRef.current = activeVisit;
+  }, [activeVisit]);
 
   // --- Lobby Presence (Online-Status) ---
   useEffect(() => {
@@ -108,9 +114,11 @@ export function MultiplayerProvider({ children }) {
         });
         setHostSnapshot(payload.snapshot);
       })
-      .on('broadcast', { event: 'visit_ended' }, () => {
-        // Besuch wurde beendet
-        handleVisitEnd();
+      .on('broadcast', { event: 'visit_ended' }, ({ payload }) => {
+        // Besuch wurde beendet (vom Partner)
+        // partnerId = der Sender dieses Events = unser Besuchs-Partner
+        const partnerId = payload?.senderId || activeVisitRef.current?.partnerId;
+        handleVisitEnd(true, partnerId);
       })
       .on('broadcast', { event: 'trade_request' }, ({ payload }) => {
         // Trade-Anfrage empfangen
@@ -231,6 +239,7 @@ export function MultiplayerProvider({ children }) {
   const inventoryUpdateCallbackRef = useRef(null);
   const newMessageCallbackRef = useRef(null);
   const tradeCompleteCallbackRef = useRef(null);
+  const visitEndCallbackRef = useRef(null);
 
   const setVisitorActionCallback = useCallback((cb) => {
     visitorActionCallbackRef.current = cb;
@@ -246,6 +255,10 @@ export function MultiplayerProvider({ children }) {
 
   const setTradeCompleteCallback = useCallback((cb) => {
     tradeCompleteCallbackRef.current = cb;
+  }, []);
+
+  const setVisitEndCallback = useCallback((cb) => {
+    visitEndCallbackRef.current = cb;
   }, []);
 
   // --- Initiale Daten laden ---
@@ -406,7 +419,11 @@ export function MultiplayerProvider({ children }) {
     setIncomingVisitRequest(null);
   }, []);
 
-  const handleVisitEnd = useCallback(() => {
+  const handleVisitEnd = useCallback((wasActive = true, partnerId = null) => {
+    // Ei-Belohnung: Wenn der Besuch aktiv war (nicht nur abgelehnt)
+    if (wasActive && visitEndCallbackRef.current && partnerId) {
+      visitEndCallbackRef.current(partnerId);
+    }
     setActiveVisit(null);
     setVisitorPosition(null);
     setHostSnapshot(null);
@@ -415,21 +432,22 @@ export function MultiplayerProvider({ children }) {
 
   const leaveVisit = useCallback(async () => {
     if (!activeVisit) return;
+    const partnerId = activeVisit.partnerId;
     await endVisitApi(activeVisit.sessionId);
 
-    // Partner benachrichtigen
-    const partnerChannel = supabase?.channel(`notifications:${activeVisit.partnerId}`);
+    // Partner benachrichtigen (senderId mitsenden für Ei-Belohnung)
+    const partnerChannel = supabase?.channel(`notifications:${partnerId}`);
     if (partnerChannel) {
       await partnerChannel.send({
         type: 'broadcast',
         event: 'visit_ended',
-        payload: { sessionId: activeVisit.sessionId },
+        payload: { sessionId: activeVisit.sessionId, senderId: userId },
       });
       supabase.removeChannel(partnerChannel);
     }
 
-    handleVisitEnd();
-  }, [activeVisit, handleVisitEnd]);
+    handleVisitEnd(true, partnerId);
+  }, [activeVisit, handleVisitEnd, userId]);
 
   // --- Position broadcasten (Besucher) ---
   const broadcastPosition = useCallback((x, y) => {
@@ -618,6 +636,9 @@ export function MultiplayerProvider({ children }) {
     cancelMyTrade,
     completeMyTrade,
     setTradeCompleteCallback,
+
+    // Visit-End Callback (Ei-Belohnung)
+    setVisitEndCallback,
 
     // Hilfsfunktionen
     isOnline: (friendId) => !!onlineUsers[friendId],
