@@ -4,6 +4,7 @@
 
 import React, { useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { MultiplayerProvider } from './contexts/MultiplayerContext';
 import Game from './components/Game';
 import LoginScreen from './components/LoginScreen';
 import './App.css';
@@ -35,7 +36,16 @@ function AppContent() {
     return <LoginScreen onSkip={() => setSkippedLogin(true)} />;
   }
 
-  return <Game key={user?.id ?? 'guest'} />;
+  // Multiplayer nur fuer eingeloggte User
+  if (user) {
+    return (
+      <MultiplayerProvider>
+        <Game key={user.id} />
+      </MultiplayerProvider>
+    );
+  }
+
+  return <Game key="guest" />;
 }
 
 function App() {

@@ -140,10 +140,12 @@ export default function CatInfoDialog({ cat, inventory, onPet, onFeed, onDismiss
           Deine Katze braucht tägliche Zuneigung. Streichle und füttere sie regelmäßig!
         </p>
 
-        {/* Wegschicken */}
-        <button style={styles.dismissBtn} onClick={onDismiss}>
-          Wegschicken
-        </button>
+        {/* Wegschicken (nicht im Besucher-Modus) */}
+        {onDismiss && (
+          <button style={styles.dismissBtn} onClick={onDismiss}>
+            Wegschicken
+          </button>
+        )}
       </div>
     </div>
   );

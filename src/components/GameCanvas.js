@@ -11,7 +11,7 @@ import homeMap, { TREE_POSITION } from '../data/homeMap';
 import { ANIMAL_TYPES, ANIMAL_HUNGER_MAX } from '../systems/AnimalSystem';
 import { getCatStage, CAT_AFFECTION_MAX } from '../systems/CatSystem';
 
-export default function GameCanvas({ gameState, onMapClick, onMouseMove, placementGhost, canvasSize }) {
+export default function GameCanvas({ gameState, onMapClick, onMouseMove, placementGhost, canvasSize, visitorPosition, visitorName, visitMode, hostSnapshot }) {
   const canvasRef = useRef(null);
   const animFrame = useRef(null);
 
@@ -1508,6 +1508,94 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
   }, [gameState]);
 
   // Ausgangs-Markierungen zeichnen
+  // Besucher-Avatar zeichnen
+  const drawVisitor = useCallback((ctx, camera) => {
+    if (!visitorPosition) return;
+
+    const vx = visitorPosition.x + camera.x;
+    const vy = visitorPosition.y + camera.y;
+    const name = visitorName || 'Besucher';
+
+    // Blauer Kreis (Besucher)
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(vx, vy, 14, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(52, 152, 219, 0.8)';
+    ctx.fill();
+    ctx.strokeStyle = '#2980b9';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Innerer heller Kreis
+    ctx.beginPath();
+    ctx.arc(vx, vy - 2, 5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.fill();
+
+    // Koerper
+    ctx.beginPath();
+    ctx.arc(vx, vy + 6, 8, Math.PI, 0);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.fill();
+
+    // Username-Label
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    // Hintergrund
+    const textWidth = ctx.measureText(name).width;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(vx - textWidth / 2 - 4, vy - 28, textWidth + 8, 14);
+    // Text
+    ctx.fillStyle = '#3498db';
+    ctx.fillText(name, vx, vy - 16);
+
+    ctx.restore();
+  }, [visitorPosition, visitorName]);
+
+  // Host-Avatar zeichnen (fuer Besucher-Ansicht)
+  const drawHostAvatar = useCallback((ctx, camera) => {
+    if (!hostSnapshot?.hostPlayer) return;
+
+    const hx = hostSnapshot.hostPlayer.x + camera.x;
+    const hy = hostSnapshot.hostPlayer.y + camera.y;
+
+    // Gruener Kreis (Host)
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(hx, hy, 14, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(46, 204, 113, 0.8)';
+    ctx.fill();
+    ctx.strokeStyle = '#27ae60';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Kopf
+    ctx.beginPath();
+    ctx.arc(hx, hy - 2, 5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.fill();
+
+    // Koerper
+    ctx.beginPath();
+    ctx.arc(hx, hy + 6, 8, Math.PI, 0);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.fill();
+
+    // Host-Label
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    const label = 'Host';
+    const textWidth = ctx.measureText(label).width;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(hx - textWidth / 2 - 4, hy - 28, textWidth + 8, 14);
+    ctx.fillStyle = '#2ecc71';
+    ctx.fillText(label, hx, hy - 16);
+
+    ctx.restore();
+  }, [hostSnapshot]);
+
   const drawExitMarkers = useCallback((ctx, camera) => {
     const markers = [
       { label: '▲ Wald', x: 9.5 * TILE_SIZE, y: 0.3 * TILE_SIZE },
@@ -1594,8 +1682,20 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
         drawPlayer(ctx, zeroCamera);
       }
 
-      // Ausgangs-Markierungen
-      drawExitMarkers(ctx, zeroCamera);
+      // Besucher-Avatar (Host sieht Besucher)
+      if (visitMode === 'host') {
+        drawVisitor(ctx, zeroCamera);
+      }
+
+      // Host-Avatar (Besucher sieht Host)
+      if (visitMode === 'visitor') {
+        drawHostAvatar(ctx, zeroCamera);
+      }
+
+      // Ausgangs-Markierungen (nicht im Besucher-Modus)
+      if (visitMode !== 'visitor') {
+        drawExitMarkers(ctx, zeroCamera);
+      }
 
       ctx.restore();
 
@@ -1612,7 +1712,7 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
         cancelAnimationFrame(animFrame.current);
       }
     };
-  }, [gameState, canvasSize, placementGhost, getCameraOffset, getScale, drawTile, drawPlayer, drawBuildings, drawGrowingTree, drawDroppedSeeds, drawWeeds, drawPlantedTrees, drawAnimals, drawPlacementGhost, drawWeather, drawExitMarkers]);
+  }, [gameState, canvasSize, placementGhost, getCameraOffset, getScale, drawTile, drawPlayer, drawBuildings, drawGrowingTree, drawDroppedSeeds, drawWeeds, drawPlantedTrees, drawAnimals, drawPlacementGhost, drawWeather, drawExitMarkers, drawVisitor, drawHostAvatar, visitMode]);
 
   // Screen-Koordinaten → Welt-Koordinaten (mit Skalierung)
   const screenToWorld = useCallback((screenX, screenY) => {

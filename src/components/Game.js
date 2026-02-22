@@ -24,6 +24,15 @@ import AnimalInfoDialog from './AnimalInfoDialog';
 import CatInfoDialog from './CatInfoDialog';
 import GameToast from './GameToast';
 import AnimalDismissDialog from './AnimalDismissDialog';
+import FriendListPanel from './FriendListPanel';
+import ChatPanel from './ChatPanel';
+import VisitRequestPopup from './VisitRequestPopup';
+import VisitOverlay from './VisitOverlay';
+import TradeWindow from './TradeWindow';
+import MessageBadge from './MessageBadge';
+import { useMultiplayer } from '../contexts/MultiplayerContext';
+import { createHostSnapshot } from '../systems/VisitSystem';
+import { executeTrade } from '../systems/TradeSystem';
 import {
   startGathering,
   pauseGathering,
@@ -51,9 +60,11 @@ export default function Game() {
     handleDeath,
     consumeItem,
     manualSave,
+    setIsVisiting,
   } = useGameLoop();
 
   const { user, isAdmin, signOut } = useAuth();
+  const mp = useMultiplayer();
 
   const [showInventory, setShowInventory] = useState(false);
   const [showCrafting, setShowCrafting] = useState(false);
@@ -85,6 +96,9 @@ export default function Game() {
   const [dismissTarget, setDismissTarget] = useState(null);
   // Baumfäll-Dialog: { type: 'main'|'planted', col, row, index? }
   const [treeFellConfirm, setTreeFellConfirm] = useState(null);
+  // Multiplayer-UI State
+  const [showFriends, setShowFriends] = useState(false);
+  const [showChat, setShowChat] = useState(null); // { friendId, friendName }
 
   const keysPressed = useRef(new Set());
   const moveInterval = useRef(null);
@@ -157,6 +171,109 @@ export default function Game() {
     }
   }, [gameState?._catHatched, setGameState]);
 
+  // --- Multiplayer: Beduerfnisse pausieren wenn auf Besuch ---
+  useEffect(() => {
+    if (setIsVisiting) {
+      setIsVisiting(!!mp?.activeVisit);
+    }
+  }, [mp?.activeVisit, setIsVisiting]);
+
+  // --- Multiplayer: Callbacks registrieren ---
+  useEffect(() => {
+    if (!mp) return;
+
+    // Host: Besucher-Aktionen empfangen und ausfuehren
+    mp.setVisitorActionCallback((action) => {
+      if (!gameStateRef.current) return;
+
+      if (action.type === 'pet_cat') {
+        setGameState(prev => {
+          const newAnimals = (prev.animals || []).map(a => {
+            if (a.id === action.catId && a.type === 'cat' && canPetCat(a)) {
+              return petCat(a);
+            }
+            return a;
+          });
+          return { ...prev, animals: newAnimals };
+        });
+        setTimeout(() => manualSave(), 0);
+      } else if (action.type === 'feed_cat') {
+        // Besucher fuettert mit EIGENEN Items → kein Inventar-Abzug beim Host
+        setGameState(prev => {
+          const newAnimals = (prev.animals || []).map(a => {
+            if (a.id === action.catId && a.type === 'cat') {
+              return feedCat(a, action.foodItemId);
+            }
+            return a;
+          });
+          return { ...prev, animals: newAnimals };
+        });
+        setTimeout(() => manualSave(), 0);
+      } else if (action.type === 'feed_animal') {
+        setGameState(prev => {
+          const newAnimals = (prev.animals || []).map(a => {
+            if (a.id === action.animalId) {
+              return feedAnimal(a, action.fruitValue);
+            }
+            return a;
+          });
+          return { ...prev, animals: newAnimals };
+        });
+        setTimeout(() => manualSave(), 0);
+      }
+    });
+
+    // Besucher: Inventar-Update nach Trade empfangen
+    mp.setInventoryUpdateCallback((newInventory) => {
+      setGameState(prev => ({ ...prev, inventory: newInventory }));
+      setTimeout(() => manualSave(), 0);
+    });
+
+    return () => {
+      mp.setVisitorActionCallback(null);
+      mp.setInventoryUpdateCallback(null);
+    };
+  }, [mp, setGameState, manualSave]);
+
+  // --- Multiplayer: Position broadcasten waehrend Besuch ---
+  useEffect(() => {
+    if (!mp?.activeVisit || !gameState?.player) return;
+
+    const interval = setInterval(() => {
+      const gs = gameStateRef.current;
+      if (gs?.player) {
+        mp.broadcastPosition(gs.player.x, gs.player.y);
+      }
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [mp, mp?.activeVisit, gameState?.player]);
+
+  // --- Multiplayer: Host sendet Snapshot-Updates ---
+  useEffect(() => {
+    if (!mp?.activeVisit || mp.activeVisit.role !== 'host' || !gameState) return;
+
+    const interval = setInterval(() => {
+      const gs = gameStateRef.current;
+      if (gs) {
+        const snapshot = createHostSnapshot(gs);
+        mp.broadcastSnapshotUpdate(snapshot);
+      }
+    }, 5000); // Alle 5 Sekunden
+
+    return () => clearInterval(interval);
+  }, [mp, mp?.activeVisit, gameState]);
+
+  // --- Multiplayer: Besuchsanfrage auto-ablehnen waehrend Gathering ---
+  useEffect(() => {
+    if (!mp?.incomingVisitRequest || !gameState?.gathering?.isActive) return;
+
+    // Automatisch ablehnen wenn auf Sammelreise
+    if (mp.incomingVisitRequest && gameState.gathering) {
+      mp.declineVisitRequest(mp.incomingVisitRequest.sessionId);
+    }
+  }, [mp, gameState?.gathering]);
+
   // Canvas-Größe an Fenster anpassen
   useEffect(() => {
     const updateSize = () => {
@@ -214,6 +331,7 @@ export default function Game() {
         if (key === 'c') setShowCrafting(v => !v);
         if (key === 't') setShowDiary(v => !v);
         if (key === 'e') setShowAchievements(v => !v);
+        if (key === 'f' && user) setShowFriends(v => !v);
       }
     };
 
@@ -473,19 +591,83 @@ export default function Game() {
     setShowInventory(false);
   }, []);
 
+  // --- Multiplayer: Trade abschliessen (Host-Seite) ---
+  const handleTradeComplete = useCallback((trade) => {
+    if (!mp || !gameState || mp.activeVisit?.role !== 'host') return;
+
+    // Trade ausfuehren
+    const isInitiator = trade.initiator_id === user?.id;
+    const myInventory = gameState.inventory;
+    // Partner-Inventar haben wir nicht lokal → wir senden nur die Items
+    // Der Host fuehrt den Trade aus und sendet das Ergebnis
+    const result = executeTrade(trade,
+      isInitiator ? myInventory : {}, // unser Inventar
+      isInitiator ? {} : myInventory   // Partner-Inventar
+    );
+
+    if (result.success) {
+      // Eigenes Inventar aktualisieren
+      const newInventory = isInitiator ? result.initiatorInventory : result.partnerInventory;
+      const partnerNewInventory = isInitiator ? result.partnerInventory : result.initiatorInventory;
+
+      setGameState(prev => ({ ...prev, inventory: newInventory }));
+      mp.completeMyTrade(partnerNewInventory);
+      setTimeout(() => manualSave(), 0);
+    }
+  }, [mp, gameState, user, setGameState, manualSave]);
+
   // Touch-Steuerung (Klick auf Karte)
   const handleMapClick = useCallback((worldX, worldY) => {
     if (!gameState || gameState.gathering || gameState.vacation.isActive) return;
     if (showInventory || showCrafting || biomePrompt || demolishConfirm || animalInfo || catInfo || treeFellConfirm) return;
 
+    const isVisitor = mp?.activeVisit?.role === 'visitor';
     const col = Math.floor(worldX / TILE_SIZE);
     const row = Math.floor(worldY / TILE_SIZE);
-    // Im Platzierungsmodus: Gebäude oder Baum platzieren
-    if (placementMode) {
+
+    // Im Platzierungsmodus: Gebäude oder Baum platzieren (nicht als Besucher)
+    if (placementMode && !isVisitor) {
       if (placementMode.type === 'tree_seed') {
         handlePlantTree(col, row);
       } else {
         handlePlaceBuilding(col, row);
+      }
+      return;
+    }
+
+    // Besucher: Nur Tiere anklicken erlaubt
+    if (isVisitor) {
+      // Tier-Klick auf Host-Snapshot
+      const snapshotAnimals = mp.hostSnapshot?.animals || [];
+      const clickedAnimal = snapshotAnimals.find(a => {
+        const dist = Math.sqrt((worldX - a.x) ** 2 + (worldY - a.y) ** 2);
+        const animalDef = ANIMAL_TYPES[a.type];
+        return dist < (animalDef?.size || 20) * 0.8;
+      });
+      if (clickedAnimal) {
+        if (clickedAnimal.type === 'cat') {
+          setCatInfo({ ...clickedAnimal, _isVisitorView: true });
+        } else {
+          setAnimalInfo({ ...clickedAnimal, _isVisitorView: true });
+        }
+        return;
+      }
+
+      // Besucher: Click-to-Walk (auf Host-Map)
+      if (col >= 0 && col < MAP_COLS && row >= 0 && row < MAP_ROWS) {
+        const tileType = homeMap[row]?.[col];
+        if (!COLLISION_TILES.includes(tileType)) {
+          setGameState(prev => ({
+            ...prev,
+            player: {
+              x: prev.player.x,
+              y: prev.player.y,
+              targetX: worldX,
+              targetY: worldY,
+              moving: true,
+            },
+          }));
+        }
       }
       return;
     }
@@ -604,7 +786,7 @@ export default function Game() {
         }));
       }
     }
-  }, [gameState, showInventory, showCrafting, biomePrompt, demolishConfirm, animalInfo, catInfo, treeFellConfirm, placementMode, setGameState, manualSave, checkExitAfterMove, handlePlaceBuilding, handlePlantTree]);
+  }, [gameState, showInventory, showCrafting, biomePrompt, demolishConfirm, animalInfo, catInfo, treeFellConfirm, placementMode, setGameState, manualSave, checkExitAfterMove, handlePlaceBuilding, handlePlantTree, mp]);
 
   // Baum faellen (Kristallaxt noetig)
   const handleFellTree = useCallback(() => {
@@ -750,6 +932,24 @@ export default function Game() {
     const itemDef = items[foodItemId];
     if (!itemDef || !itemDef.fruitValue) return;
 
+    // Besucher-Modus: Aktion per Broadcast an Host senden + eigenes Item verbrauchen
+    if (animalInfo._isVisitorView && mp) {
+      mp.broadcastVisitorAction({ type: 'feed_animal', animalId: animalInfo.id, fruitValue: itemDef.fruitValue });
+      setGameState(prev => {
+        const newInventory = { ...prev.inventory };
+        if (!newInventory[foodItemId] || newInventory[foodItemId].amount <= 0) return prev;
+        newInventory[foodItemId] = {
+          ...newInventory[foodItemId],
+          amount: newInventory[foodItemId].amount - 1,
+        };
+        if (newInventory[foodItemId].amount <= 0) delete newInventory[foodItemId];
+        return { ...prev, inventory: newInventory };
+      });
+      setAnimalInfo(null);
+      setTimeout(() => manualSave(), 0);
+      return;
+    }
+
     setGameState(prev => {
       // Prüfen ob Item im Inventar
       if (!prev.inventory[foodItemId] || prev.inventory[foodItemId].amount <= 0) return prev;
@@ -782,12 +982,19 @@ export default function Game() {
     });
 
     setTimeout(() => manualSave(), 0);
-  }, [animalInfo, setGameState, manualSave]);
+  }, [animalInfo, setGameState, manualSave, mp]);
 
   // Katze streicheln
   const handlePetCat = useCallback(() => {
     if (!catInfo) return;
     if (!canPetCat(catInfo)) return;
+
+    // Besucher-Modus: Aktion per Broadcast an Host senden
+    if (catInfo._isVisitorView && mp) {
+      mp.broadcastVisitorAction({ type: 'pet_cat', catId: catInfo.id });
+      setCatInfo(null);
+      return;
+    }
 
     setGameState(prev => {
       const newAnimals = (prev.animals || []).map(a => {
@@ -799,11 +1006,30 @@ export default function Game() {
       return { ...prev, animals: newAnimals };
     });
     setTimeout(() => manualSave(), 0);
-  }, [catInfo, setGameState, manualSave]);
+  }, [catInfo, setGameState, manualSave, mp]);
 
   // Katze füttern (erhöht Zuneigung)
   const handleFeedCat = useCallback((foodItemId) => {
     if (!catInfo) return;
+
+    // Besucher-Modus: Aktion per Broadcast an Host senden + eigenes Item verbrauchen
+    if (catInfo._isVisitorView && mp) {
+      mp.broadcastVisitorAction({ type: 'feed_cat', catId: catInfo.id, foodItemId });
+      // Eigenes Item verbrauchen
+      setGameState(prev => {
+        const newInventory = { ...prev.inventory };
+        if (!newInventory[foodItemId] || newInventory[foodItemId].amount <= 0) return prev;
+        newInventory[foodItemId] = {
+          ...newInventory[foodItemId],
+          amount: newInventory[foodItemId].amount - 1,
+        };
+        if (newInventory[foodItemId].amount <= 0) delete newInventory[foodItemId];
+        return { ...prev, inventory: newInventory };
+      });
+      setCatInfo(null);
+      setTimeout(() => manualSave(), 0);
+      return;
+    }
 
     setGameState(prev => {
       // Prüfen ob Item im Inventar
@@ -832,7 +1058,7 @@ export default function Game() {
       return { ...prev, inventory: newInventory, animals: newAnimals };
     });
     setTimeout(() => manualSave(), 0);
-  }, [catInfo, setGameState, manualSave]);
+  }, [catInfo, setGameState, manualSave, mp]);
 
   // Sammelreise starten
   const handleStartGathering = useCallback((direction, topicId = null, targetDuration = null) => {
@@ -1247,6 +1473,10 @@ export default function Game() {
           onMouseMove={placementMode ? handleMouseMove : null}
           placementGhost={placementGhost}
           canvasSize={canvasSize}
+          visitorPosition={mp?.visitorPosition}
+          visitorName={mp?.activeVisit?.partnerName}
+          visitMode={mp?.activeVisit?.role || null}
+          hostSnapshot={mp?.hostSnapshot}
         />
       )}
 
@@ -1329,7 +1559,7 @@ export default function Game() {
                 style={styles.bottomBarToggle}
                 onClick={() => setToolbarExpanded(!toolbarExpanded)}
               >
-                <span style={{ fontSize: '16px' }}>🎒🔨📖🏆{isAdmin ? '🔧' : ''}</span>
+                <span style={{ fontSize: '16px' }}>🎒🔨📖🏆{user ? '👥' : ''}{isAdmin ? '🔧' : ''}</span>
                 <span style={styles.toggleArrow}>{toolbarExpanded ? '▼' : '▲'}</span>
               </div>
               {toolbarExpanded && (
@@ -1366,6 +1596,17 @@ export default function Game() {
                     <span style={styles.btnLabel}>Erfolge</span>
                     <span style={styles.btnHint}>[E]</span>
                   </button>
+                  {user && (
+                    <button
+                      style={{ ...styles.actionBtn, borderColor: 'rgba(52,152,219,0.4)', position: 'relative' }}
+                      onClick={() => setShowFriends(true)}
+                    >
+                      <span style={styles.btnIcon}>👥</span>
+                      <span style={styles.btnLabel}>Freunde</span>
+                      <span style={styles.btnHint}>[F]</span>
+                      {mp?.unreadCount > 0 && <MessageBadge count={mp.unreadCount} />}
+                    </button>
+                  )}
                   {isAdmin && (
                     <button
                       style={{ ...styles.actionBtn, borderColor: 'rgba(230,126,34,0.4)' }}
@@ -1505,7 +1746,7 @@ export default function Game() {
           animal={animalInfo}
           inventory={gameState.inventory}
           onFeed={handleFeedAnimal}
-          onDismiss={() => handleStartDismiss(animalInfo)}
+          onDismiss={animalInfo._isVisitorView ? null : () => handleStartDismiss(animalInfo)}
           onClose={() => setAnimalInfo(null)}
         />
       )}
@@ -1517,7 +1758,7 @@ export default function Game() {
           inventory={gameState.inventory}
           onPet={handlePetCat}
           onFeed={handleFeedCat}
-          onDismiss={() => handleStartDismiss(catInfo)}
+          onDismiss={catInfo._isVisitorView ? null : () => handleStartDismiss(catInfo)}
           onClose={() => setCatInfo(null)}
         />
       )}
@@ -1538,6 +1779,63 @@ export default function Game() {
           emoji={gameToast.emoji}
           message={gameToast.message}
           onDismiss={() => setGameToast(null)}
+        />
+      )}
+
+      {/* --- Multiplayer-UI --- */}
+
+      {/* Freundesliste */}
+      {showFriends && mp && (
+        <FriendListPanel
+          onOpenChat={(friendId, friendName) => {
+            setShowChat({ friendId, friendName });
+            setShowFriends(false);
+          }}
+          onClose={() => setShowFriends(false)}
+        />
+      )}
+
+      {/* Chat-Panel */}
+      {showChat && mp && (
+        <ChatPanel
+          friendId={showChat.friendId}
+          friendName={showChat.friendName}
+          onClose={() => setShowChat(null)}
+        />
+      )}
+
+      {/* Besuchsanfrage-Popup */}
+      {mp?.incomingVisitRequest && !gameState?.gathering && (
+        <VisitRequestPopup
+          visitorName={mp.incomingVisitRequest.visitorName}
+          onAccept={() => mp.acceptVisitRequest(
+            mp.incomingVisitRequest.sessionId,
+            gameState
+          )}
+          onDecline={() => mp.declineVisitRequest(
+            mp.incomingVisitRequest.sessionId
+          )}
+        />
+      )}
+
+      {/* Besuchs-Overlay (waehrend Besuch) */}
+      {mp?.activeVisit && (
+        <VisitOverlay
+          role={mp.activeVisit.role}
+          partnerName={mp.activeVisit.partnerName}
+          onLeave={() => mp.leaveVisit()}
+          onKick={() => mp.leaveVisit()}
+          onTrade={() => mp.startTrade()}
+        />
+      )}
+
+      {/* Trade-Fenster */}
+      {mp?.activeTrade && (
+        <TradeWindow
+          myInventory={gameState.inventory}
+          partnerName={mp.activeVisit?.partnerName || 'Spieler'}
+          onTradeComplete={handleTradeComplete}
+          onClose={() => mp.cancelMyTrade()}
         />
       )}
 

@@ -121,6 +121,8 @@ export default function useGameLoop() {
   // Ref für aktuellen State (damit Intervals immer den neuesten haben)
   const gameStateRef = useRef(null);
   const lastFrameTime = useRef(Date.now());
+  // Multiplayer: Besucher-Modus (pausiert Beduerfnisse wie Urlaub)
+  const isVisitingRef = useRef(false);
 
   // Ref synchron halten
   useEffect(() => {
@@ -374,7 +376,7 @@ export default function useGameLoop() {
       if (delta <= 0 || delta > 5) return;
 
       setGameState(prev => {
-        if (!prev || prev.vacation.isActive) return prev;
+        if (!prev || prev.vacation.isActive || isVisitingRef.current) return prev;
 
         // Bedürfnisse aktualisieren
         const newNeeds = updateNeeds(prev, delta);
@@ -704,6 +706,11 @@ export default function useGameLoop() {
     }
   }, []);
 
+  // Multiplayer: Besucher-Modus setzen (pausiert Beduerfnisse)
+  const setIsVisiting = useCallback((visiting) => {
+    isVisitingRef.current = visiting;
+  }, []);
+
   return {
     gameState,
     setGameState,
@@ -719,5 +726,6 @@ export default function useGameLoop() {
     removeFromInventory,
     consumeItem,
     manualSave,
+    setIsVisiting,
   };
 }

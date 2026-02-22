@@ -139,9 +139,11 @@ export default function AnimalInfoDialog({ animal, inventory, onFeed, onDismiss,
           <button style={styles.closeBtn} onClick={onClose}>
             Schliessen
           </button>
-          <button style={styles.dismissBtn} onClick={onDismiss}>
-            Wegschicken
-          </button>
+          {onDismiss && (
+            <button style={styles.dismissBtn} onClick={onDismiss}>
+              Wegschicken
+            </button>
+          )}
         </div>
       </div>
     </div>
