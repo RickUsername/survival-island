@@ -51,7 +51,7 @@ export default function GameToast({ emoji, message, onDismiss, duration = 4000 }
 const styles = {
   wrapper: {
     position: 'fixed',
-    top: '20px',
+    top: 'calc(20px + env(safe-area-inset-top, 0px))',
     left: 0,
     right: 0,
     display: 'flex',

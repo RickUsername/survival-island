@@ -321,6 +321,44 @@ export default function Game() {
     }
   }, [mp, gameState?.gathering]);
 
+  // Safe-Area-Insets für iOS Notch/Dynamic Island auslesen
+  const [safeArea, setSafeArea] = useState({ top: 0, bottom: 0, left: 0, right: 0 });
+  useEffect(() => {
+    const readSafeArea = () => {
+      // Temporäres Element um env() aufzulösen (getComputedStyle auf :root gibt manchmal unresolved zurück)
+      const el = document.createElement('div');
+      el.style.position = 'fixed';
+      el.style.visibility = 'hidden';
+      el.style.top = 'env(safe-area-inset-top, 0px)';
+      el.style.left = 'env(safe-area-inset-left, 0px)';
+      document.body.appendChild(el);
+      const cs = getComputedStyle(el);
+      const top = parseInt(cs.top, 10) || 0;
+      const left = parseInt(cs.left, 10) || 0;
+      document.body.removeChild(el);
+
+      const el2 = document.createElement('div');
+      el2.style.position = 'fixed';
+      el2.style.visibility = 'hidden';
+      el2.style.bottom = 'env(safe-area-inset-bottom, 0px)';
+      el2.style.right = 'env(safe-area-inset-right, 0px)';
+      document.body.appendChild(el2);
+      const cs2 = getComputedStyle(el2);
+      const bottom = parseInt(cs2.bottom, 10) || 0;
+      const right = parseInt(cs2.right, 10) || 0;
+      document.body.removeChild(el2);
+
+      setSafeArea({ top, bottom, left, right });
+    };
+    readSafeArea();
+    window.addEventListener('resize', readSafeArea);
+    window.addEventListener('orientationchange', readSafeArea);
+    return () => {
+      window.removeEventListener('resize', readSafeArea);
+      window.removeEventListener('orientationchange', readSafeArea);
+    };
+  }, []);
+
   // Canvas-Größe an Fenster anpassen (mit iOS visualViewport-Unterstützung)
   useEffect(() => {
     const updateSize = () => {
@@ -1565,7 +1603,7 @@ export default function Game() {
       {!gameState.gathering && (
         <>
           {/* Obere Leiste */}
-          <div style={styles.topBar}>
+          <div style={{ ...styles.topBar, top: safeArea.top }}>
             {/* Links: Wetter + Urlaub (einklappbar) */}
             <div
               style={styles.topLeft}
@@ -1575,7 +1613,7 @@ export default function Game() {
               <span style={styles.toggleArrow}>{topBarExpanded ? '▲' : '▼'}</span>
             </div>
             {topBarExpanded && (
-              <div style={styles.topLeftExpanded}>
+              <div style={{ ...styles.topLeftExpanded, top: safeArea.top + 36 }}>
                 <VacationButton
                   vacation={gameState.vacation}
                   onVacationChange={handleVacationChange}
@@ -1594,7 +1632,7 @@ export default function Game() {
 
           {/* Cloud-Indikator (nur wenn eingeloggt) */}
           {user && (
-            <div style={styles.cloudIndicator}>
+            <div style={{ ...styles.cloudIndicator, top: safeArea.top + 4 }}>
               <span style={{ color: '#4a8c3f', fontSize: '11px' }}>
                 ☁️ {user.user_metadata?.username || user.email?.split('@')[0] || 'Angemeldet'}
               </span>
@@ -1606,7 +1644,7 @@ export default function Game() {
 
           {/* Platzierungsmodus-Banner */}
           {placementMode && (
-            <div style={styles.placementBanner}>
+            <div style={{ ...styles.placementBanner, top: safeArea.top + 60 }}>
               {placementMode.type === 'tree_seed'
                 ? 'Klicke auf eine freie Grasfläche, um den Samen zu pflanzen!'
                 : 'Klicke auf eine freie Grasfläche, um das Gebäude zu platzieren!'}
@@ -1618,7 +1656,7 @@ export default function Game() {
 
           {/* Untere Leiste - einklappbar (nicht im Platzierungsmodus) */}
           {!placementMode && (
-            <div style={styles.bottomBar}>
+            <div style={{ ...styles.bottomBar, bottom: safeArea.bottom }}>
               <div
                 style={styles.bottomBarToggle}
                 onClick={() => setToolbarExpanded(!toolbarExpanded)}

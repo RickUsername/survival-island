@@ -3,7 +3,7 @@
 // Cache-Version wird bei jedem Deploy erhöht
 // ============================================
 
-const CACHE_VERSION = 4;
+const CACHE_VERSION = 5;
 const CACHE_NAME = `survival-island-v${CACHE_VERSION}`;
 
 // Bei Installation: Nur Manifest cachen (NICHT index.html — die soll immer frisch sein)

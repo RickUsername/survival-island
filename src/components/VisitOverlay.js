@@ -65,7 +65,7 @@ export default function VisitOverlay({ role, partnerName, onLeave, onKick, onTra
 const styles = {
   banner: {
     position: 'fixed',
-    top: '50px',
+    top: 'calc(50px + env(safe-area-inset-top, 0px))',
     left: '50%',
     transform: 'translateX(-50%)',
     backgroundColor: 'rgba(52, 152, 219, 0.9)',
@@ -89,7 +89,7 @@ const styles = {
   },
   actions: {
     position: 'fixed',
-    top: '90px',
+    top: 'calc(90px + env(safe-area-inset-top, 0px))',
     right: '10px',
     display: 'flex',
     flexDirection: 'column',
