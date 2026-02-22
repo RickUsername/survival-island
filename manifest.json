@@ -1,0 +1,28 @@
+{
+  "short_name": "Survival Island",
+  "name": "Survival Island - 2D Survival Tamagotchi",
+  "description": "Manage eine gestrandete Figur auf einer einsamen Insel. Sammle Ressourcen, baue Unterstände und überlebe!",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "logo192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "logo512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "orientation": "landscape",
+  "theme_color": "#0a0a1a",
+  "background_color": "#0a0a1a",
+  "categories": ["games", "entertainment"]
+}
