@@ -79,11 +79,14 @@ function TradeWindowInner({
   const handleConfirm = useCallback(async () => {
     const result = await mp.confirmMyTrade();
     if (result && result.initiator_confirmed && result.partner_confirmed) {
-      // Beide bestaetigt -> Trade wird vom Host ausgefuehrt
+      // Beide bestaetigt -> Trade lokal ausfuehren
       if (onTradeComplete) {
         onTradeComplete(result);
       }
     }
+    // Wenn nur wir bestaetigt haben, wartet der Partner noch.
+    // Wenn der Partner dann auch bestaetigt, wird der Trade via
+    // tradeCompleteCallback im MultiplayerContext ausgeloest.
   }, [mp, onTradeComplete]);
 
   const handleCancel = useCallback(async () => {

@@ -32,7 +32,7 @@ import TradeWindow from './TradeWindow';
 import MessageBadge from './MessageBadge';
 import { useMultiplayer } from '../contexts/MultiplayerContext';
 import { createHostSnapshot } from '../systems/VisitSystem';
-import { executeTrade } from '../systems/TradeSystem';
+import { executeTradeForPlayer } from '../systems/TradeSystem';
 import {
   startGathering,
   pauseGathering,
@@ -103,6 +103,7 @@ export default function Game() {
   const keysPressed = useRef(new Set());
   const moveInterval = useRef(null);
   const gameStateRef = useRef(null);
+  const tradeCompleteRef = useRef(null);
 
   // Ref synchron halten
   useEffect(() => {
@@ -223,15 +224,17 @@ export default function Game() {
       }
     });
 
-    // Besucher: Inventar-Update nach Trade empfangen
-    mp.setInventoryUpdateCallback((newInventory) => {
-      setGameState(prev => ({ ...prev, inventory: newInventory }));
-      setTimeout(() => manualSave(), 0);
+    // Trade-Complete: Wenn Partner bestaetigt → Trade lokal ausfuehren
+    // Nutzt Ref statt Dependency um Reihenfolge-Problem zu vermeiden
+    mp.setTradeCompleteCallback((trade) => {
+      if (tradeCompleteRef.current) {
+        tradeCompleteRef.current(trade);
+      }
     });
 
     return () => {
       mp.setVisitorActionCallback(null);
-      mp.setInventoryUpdateCallback(null);
+      mp.setTradeCompleteCallback(null);
     };
   }, [mp, setGameState, manualSave]);
 
@@ -591,30 +594,28 @@ export default function Game() {
     setShowInventory(false);
   }, []);
 
-  // --- Multiplayer: Trade abschliessen (Host-Seite) ---
+  // --- Multiplayer: Trade abschliessen (beide Seiten) ---
   const handleTradeComplete = useCallback((trade) => {
-    if (!mp || !gameState || mp.activeVisit?.role !== 'host') return;
+    if (!mp) return;
 
-    // Trade ausfuehren
+    const currentState = gameStateRef.current;
+    if (!currentState) return;
+
+    // Beide Spieler fuehren den Trade lokal auf ihrem eigenen Inventar aus
     const isInitiator = trade.initiator_id === user?.id;
-    const myInventory = gameState.inventory;
-    // Partner-Inventar haben wir nicht lokal → wir senden nur die Items
-    // Der Host fuehrt den Trade aus und sendet das Ergebnis
-    const result = executeTrade(trade,
-      isInitiator ? myInventory : {}, // unser Inventar
-      isInitiator ? {} : myInventory   // Partner-Inventar
-    );
+    const result = executeTradeForPlayer(trade, currentState.inventory, isInitiator);
 
     if (result.success) {
-      // Eigenes Inventar aktualisieren
-      const newInventory = isInitiator ? result.initiatorInventory : result.partnerInventory;
-      const partnerNewInventory = isInitiator ? result.partnerInventory : result.initiatorInventory;
-
-      setGameState(prev => ({ ...prev, inventory: newInventory }));
-      mp.completeMyTrade(partnerNewInventory);
+      setGameState(prev => ({ ...prev, inventory: result.inventory }));
+      mp.completeMyTrade();
       setTimeout(() => manualSave(), 0);
     }
-  }, [mp, gameState, user, setGameState, manualSave]);
+  }, [mp, user, setGameState, manualSave]);
+
+  // Ref synchronisieren fuer Callback aus MultiplayerContext
+  useEffect(() => {
+    tradeCompleteRef.current = handleTradeComplete;
+  }, [handleTradeComplete]);
 
   // Touch-Steuerung (Klick auf Karte)
   const handleMapClick = useCallback((worldX, worldY) => {

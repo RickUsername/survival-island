@@ -208,8 +208,8 @@ const recipes = [
     category: 'building',
     result: { type: 'campfire' },
     ingredients: [
-      { itemId: 'wood', amount: 5 },
-      { itemId: 'stone', amount: 5 },
+      { itemId: 'wood', amount: 2 },
+      { itemId: 'stone', amount: 2 },
     ],
     requiresTool: null,
     description: 'Ein Lagerfeuer zum Kochen von Nahrung.',

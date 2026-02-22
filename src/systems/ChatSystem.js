@@ -35,21 +35,32 @@ export async function getMessages(userId, friendId, limit = 50) {
   if (!supabase || !userId || !friendId) return [];
 
   try {
-    const { data, error } = await supabase
+    // Zwei separate Queries und zusammenfuegen (zuverlaessiger als .or())
+    const { data: sent, error: e1 } = await supabase
       .from('messages')
       .select('*')
-      .or(
-        `and(sender_id.eq.${userId},receiver_id.eq.${friendId}),` +
-        `and(sender_id.eq.${friendId},receiver_id.eq.${userId})`
-      )
+      .eq('sender_id', userId)
+      .eq('receiver_id', friendId)
       .order('created_at', { ascending: true })
       .limit(limit);
 
-    if (error) {
-      console.warn('Nachrichten laden fehlgeschlagen:', error.message);
+    const { data: received, error: e2 } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('sender_id', friendId)
+      .eq('receiver_id', userId)
+      .order('created_at', { ascending: true })
+      .limit(limit);
+
+    if (e1 || e2) {
+      console.warn('Nachrichten laden fehlgeschlagen:', e1?.message || e2?.message);
       return [];
     }
-    return data || [];
+
+    // Zusammenfuegen und nach Zeit sortieren
+    const all = [...(sent || []), ...(received || [])];
+    all.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    return all.slice(-limit);
   } catch (err) {
     console.warn('Nachrichten laden Fehler:', err);
     return [];

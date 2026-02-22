@@ -12,6 +12,7 @@ export default function ChatPanel({ friendId, friendName, onClose }) {
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef(null);
   const isOnline = mp?.isOnline(friendId);
+  const myUserId = mp?.getUserId();
 
   // Nachrichten laden
   useEffect(() => {
@@ -51,16 +52,15 @@ export default function ChatPanel({ friendId, friendName, onClose }) {
       // Nachricht lokal hinzufuegen
       setMessages(prev => [...prev, {
         id: `local_${Date.now()}`,
-        sender_id: mp.getUsername() ? 'self' : null, // placeholder
+        sender_id: myUserId,
         receiver_id: friendId,
         content: inputText.trim(),
         created_at: new Date().toISOString(),
-        _isMine: true,
       }]);
       setInputText('');
     }
     setSending(false);
-  }, [inputText, sending, mp, friendId]);
+  }, [inputText, sending, mp, friendId, myUserId]);
 
   return (
     <div style={styles.container}>
@@ -84,7 +84,7 @@ export default function ChatPanel({ friendId, friendName, onClose }) {
           </p>
         )}
         {messages.map((msg, i) => {
-          const isMine = msg._isMine || msg.receiver_id === friendId;
+          const isMine = msg.sender_id === myUserId;
           return (
             <div
               key={msg.id || i}

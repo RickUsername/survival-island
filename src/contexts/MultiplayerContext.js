@@ -118,22 +118,26 @@ export function MultiplayerProvider({ children }) {
       })
       .on('broadcast', { event: 'trade_update' }, ({ payload }) => {
         // Trade-Items aktualisiert
-        setActiveTrade(prev => prev ? { ...prev, ...payload } : null);
+        setActiveTrade(prev => {
+          if (!prev) return null;
+          const updated = { ...prev, ...payload };
+          // Wenn beide bestaetigt haben → Trade-Complete Callback auslösen
+          if (updated.initiator_confirmed && updated.partner_confirmed) {
+            // Kurz verzoegert, damit State erst gesetzt wird
+            setTimeout(() => {
+              if (tradeCompleteCallbackRef.current) {
+                tradeCompleteCallbackRef.current(updated);
+              }
+            }, 100);
+          }
+          return updated;
+        });
       })
       .on('broadcast', { event: 'trade_cancelled' }, () => {
         setActiveTrade(null);
       })
-      .on('broadcast', { event: 'trade_completed' }, ({ payload }) => {
-        setActiveTrade(prev => prev ? { ...prev, status: 'completed', ...payload } : null);
-      })
-      .on('broadcast', { event: 'inventory_update' }, ({ payload }) => {
-        // Inventar-Update nach Trade (fuer Besucher)
-        if (payload.inventory) {
-          // Wird vom Game.js gehandelt via onInventoryUpdate callback
-          if (inventoryUpdateCallbackRef.current) {
-            inventoryUpdateCallbackRef.current(payload.inventory);
-          }
-        }
+      .on('broadcast', { event: 'trade_completed' }, () => {
+        setActiveTrade(null);
       })
       .subscribe();
 
@@ -226,6 +230,7 @@ export function MultiplayerProvider({ children }) {
   const visitorActionCallbackRef = useRef(null);
   const inventoryUpdateCallbackRef = useRef(null);
   const newMessageCallbackRef = useRef(null);
+  const tradeCompleteCallbackRef = useRef(null);
 
   const setVisitorActionCallback = useCallback((cb) => {
     visitorActionCallbackRef.current = cb;
@@ -237,6 +242,10 @@ export function MultiplayerProvider({ children }) {
 
   const setNewMessageCallback = useCallback((cb) => {
     newMessageCallbackRef.current = cb;
+  }, []);
+
+  const setTradeCompleteCallback = useCallback((cb) => {
+    tradeCompleteCallbackRef.current = cb;
   }, []);
 
   // --- Initiale Daten laden ---
@@ -559,32 +568,12 @@ export function MultiplayerProvider({ children }) {
     }
   }, [activeTrade, activeVisit]);
 
-  const completeMyTrade = useCallback(async (newPartnerInventory) => {
+  const completeMyTrade = useCallback(async () => {
     if (!activeTrade) return;
 
     await completeTradeApi(activeTrade.id);
-
-    // Partner informieren + neues Inventar senden
-    if (activeVisit) {
-      const partnerChannel = supabase?.channel(`notifications:${activeVisit.partnerId}`);
-      if (partnerChannel) {
-        await partnerChannel.send({
-          type: 'broadcast',
-          event: 'trade_completed',
-          payload: { status: 'completed' },
-        });
-        // Inventar-Update an den Partner
-        await partnerChannel.send({
-          type: 'broadcast',
-          event: 'inventory_update',
-          payload: { inventory: newPartnerInventory },
-        });
-        supabase.removeChannel(partnerChannel);
-      }
-    }
-
     setActiveTrade(null);
-  }, [activeTrade, activeVisit]);
+  }, [activeTrade]);
 
   // --- Context Value ---
   const value = {
@@ -628,6 +617,7 @@ export function MultiplayerProvider({ children }) {
     confirmMyTrade,
     cancelMyTrade,
     completeMyTrade,
+    setTradeCompleteCallback,
 
     // Hilfsfunktionen
     isOnline: (friendId) => !!onlineUsers[friendId],

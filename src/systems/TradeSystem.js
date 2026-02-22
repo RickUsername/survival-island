@@ -160,71 +160,47 @@ export async function getActiveTrade(sessionId) {
   }
 }
 
-// --- Items-Tausch lokal ausfuehren ---
-// Gibt neue Inventare zurueck { initiatorInventory, partnerInventory }
-export function executeTrade(trade, initiatorInventory, partnerInventory) {
-  if (!trade) return null;
+// --- Trade lokal ausfuehren (fuer EINEN Spieler) ---
+// Jeder Spieler fuehrt den Trade auf seinem eigenen Inventar aus:
+// - Eigene angebotene Items abziehen
+// - Empfangene Items hinzufuegen
+export function executeTradeForPlayer(trade, myInventory, isInitiator) {
+  if (!trade) return { success: false, error: 'Kein Trade' };
 
-  const newInitiatorInv = { ...initiatorInventory };
-  const newPartnerInv = { ...partnerInventory };
+  const newInventory = { ...myInventory };
+  const myOfferedItems = isInitiator ? (trade.initiator_items || []) : (trade.partner_items || []);
+  const receivedItems = isInitiator ? (trade.partner_items || []) : (trade.initiator_items || []);
 
-  // 1. Validieren: Hat der Initiator alle angebotenen Items?
-  for (const item of (trade.initiator_items || [])) {
-    if (!newInitiatorInv[item.itemId] || newInitiatorInv[item.itemId].amount < item.amount) {
-      return { success: false, error: 'Nicht genug Items (Anbieter)' };
+  // 1. Validieren: Habe ich alle angebotenen Items?
+  for (const item of myOfferedItems) {
+    if (!newInventory[item.itemId] || newInventory[item.itemId].amount < item.amount) {
+      return { success: false, error: 'Nicht genug Items' };
     }
   }
 
-  // 2. Validieren: Hat der Partner alle angebotenen Items?
-  for (const item of (trade.partner_items || [])) {
-    if (!newPartnerInv[item.itemId] || newPartnerInv[item.itemId].amount < item.amount) {
-      return { success: false, error: 'Nicht genug Items (Partner)' };
+  // 2. Eigene Items abziehen
+  for (const item of myOfferedItems) {
+    newInventory[item.itemId] = {
+      ...newInventory[item.itemId],
+      amount: newInventory[item.itemId].amount - item.amount,
+    };
+    if (newInventory[item.itemId].amount <= 0) {
+      delete newInventory[item.itemId];
     }
   }
 
-  // 3. Initiator-Items entfernen und zum Partner geben
-  for (const item of (trade.initiator_items || [])) {
-    newInitiatorInv[item.itemId] = {
-      ...newInitiatorInv[item.itemId],
-      amount: newInitiatorInv[item.itemId].amount - item.amount,
-    };
-    if (newInitiatorInv[item.itemId].amount <= 0) {
-      delete newInitiatorInv[item.itemId];
+  // 3. Empfangene Items hinzufuegen
+  for (const item of receivedItems) {
+    if (!newInventory[item.itemId]) {
+      newInventory[item.itemId] = { amount: 0, collectedAt: Date.now() };
     }
-
-    if (!newPartnerInv[item.itemId]) {
-      newPartnerInv[item.itemId] = { amount: 0, collectedAt: Date.now() };
-    }
-    newPartnerInv[item.itemId] = {
-      ...newPartnerInv[item.itemId],
-      amount: newPartnerInv[item.itemId].amount + item.amount,
+    newInventory[item.itemId] = {
+      ...newInventory[item.itemId],
+      amount: newInventory[item.itemId].amount + item.amount,
     };
   }
 
-  // 4. Partner-Items entfernen und zum Initiator geben
-  for (const item of (trade.partner_items || [])) {
-    newPartnerInv[item.itemId] = {
-      ...newPartnerInv[item.itemId],
-      amount: newPartnerInv[item.itemId].amount - item.amount,
-    };
-    if (newPartnerInv[item.itemId].amount <= 0) {
-      delete newPartnerInv[item.itemId];
-    }
-
-    if (!newInitiatorInv[item.itemId]) {
-      newInitiatorInv[item.itemId] = { amount: 0, collectedAt: Date.now() };
-    }
-    newInitiatorInv[item.itemId] = {
-      ...newInitiatorInv[item.itemId],
-      amount: newInitiatorInv[item.itemId].amount + item.amount,
-    };
-  }
-
-  return {
-    success: true,
-    initiatorInventory: newInitiatorInv,
-    partnerInventory: newPartnerInv,
-  };
+  return { success: true, inventory: newInventory };
 }
 
 // --- Validierung: Hat der Spieler die Items? ---
