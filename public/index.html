@@ -34,11 +34,27 @@
     <noscript>Du benötigst JavaScript um dieses Spiel zu spielen.</noscript>
     <div id="root"></div>
     <script>
-      // Service Worker registrieren
+      // Service Worker registrieren + automatisch Updates laden
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
           navigator.serviceWorker.register('%PUBLIC_URL%/sw.js')
-            .then(reg => console.log('SW registriert:', reg.scope))
+            .then(reg => {
+              console.log('SW registriert:', reg.scope);
+              // Alle 60 Sekunden nach Updates prüfen
+              setInterval(() => reg.update(), 60000);
+              // Wenn ein neuer SW wartet → sofort aktivieren und Seite neu laden
+              reg.addEventListener('updatefound', () => {
+                const newWorker = reg.installing;
+                if (newWorker) {
+                  newWorker.addEventListener('statechange', () => {
+                    if (newWorker.state === 'activated') {
+                      // Seite neu laden um neue Version zu bekommen
+                      window.location.reload();
+                    }
+                  });
+                }
+              });
+            })
             .catch(err => console.log('SW Fehler:', err));
         });
       }
