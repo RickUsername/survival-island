@@ -1,15 +1,15 @@
 {
   "files": {
     "main.css": "/survival-island/static/css/main.51c4eec4.css",
-    "main.js": "/survival-island/static/js/main.31cbd766.js",
+    "main.js": "/survival-island/static/js/main.cf771e34.js",
     "static/js/453.663f34dd.chunk.js": "/survival-island/static/js/453.663f34dd.chunk.js",
     "index.html": "/survival-island/index.html",
     "main.51c4eec4.css.map": "/survival-island/static/css/main.51c4eec4.css.map",
-    "main.31cbd766.js.map": "/survival-island/static/js/main.31cbd766.js.map",
+    "main.cf771e34.js.map": "/survival-island/static/js/main.cf771e34.js.map",
     "453.663f34dd.chunk.js.map": "/survival-island/static/js/453.663f34dd.chunk.js.map"
   },
   "entrypoints": [
     "static/css/main.51c4eec4.css",
-    "static/js/main.31cbd766.js"
+    "static/js/main.cf771e34.js"
   ]
 }
