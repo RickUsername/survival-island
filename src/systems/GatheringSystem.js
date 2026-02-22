@@ -6,7 +6,14 @@ import { MAX_GATHERING_DURATION } from '../utils/constants';
 import { calculateLoot } from '../data/lootTables';
 import { calculateMoodFromGathering } from './NeedsSystem';
 import { getActiveToolTypes } from './ToolSystem';
-import lootTables from '../data/lootTables';
+
+// Biom → Werkzeug-Typ Zuordnung (für Haltbarkeits-Abzug)
+const BIOME_TOOL_MAP = {
+  north: ['axe'],
+  south: ['fishing_rod'],
+  west:  [],
+  east:  ['pickaxe'],
+};
 
 // Neue Sammelreise starten
 export function startGathering(biome, topicId = null, targetDuration = null) {
@@ -79,8 +86,7 @@ export function finishGathering(gathering, tools = []) {
   const moodGain = calculateMoodFromGathering(elapsed);
 
   // Welche Tool-Typen wurden in diesem Biom benutzt?
-  const biome = lootTables[gathering.biome];
-  const biomeToolTypes = biome?.toolBonus ? Object.keys(biome.toolBonus) : [];
+  const biomeToolTypes = BIOME_TOOL_MAP[gathering.biome] || [];
   const activeTypes = getActiveToolTypes(tools);
   // Nur Tool-Typen, die sowohl aktiv als auch im Biom relevant sind
   const usedToolTypes = biomeToolTypes.filter(t => activeTypes.includes(t));

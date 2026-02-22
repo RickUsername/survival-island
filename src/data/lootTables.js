@@ -2,226 +2,207 @@
 // Loot-Tabellen für Sammelreisen
 // ============================================
 //
-// MECHANIK:
-// - Jede Minute Reisedauer = 1 Runde
-// - Pro Runde: DROP_CHANCE (5%) ob überhaupt ein Item droppt
-// - Wenn Drop → gewichtete Auswahl welches Item (biom-spezifisch)
-// - Erwartungswert: 120 Runden × 0.05 = ~6 Items bei voller 2h-Reise
+// DREI-LOTTERIEN-SYSTEM:
 //
-// GEWICHTUNG (Ziel-Kategorien pro Biom):
-// - Nahrung/Wasser: ~40%
-// - Holz:           ~30%
-// - Stein:          ~20%
-// - Seltenes:       ~10% (Lianen, Lehm, Erz, Kristall)
+// 1) BASIS-LOTTERIE (5% pro Minute):
+//    Feste Verteilung: 25% Essen, 25% Holz, 25% Stein, 25% Rest (biomspezifisch)
+//    → Erwartung: ~6 Items bei 2h
 //
-// SELTENHEITS-BOOST:
-// Items mit rarity: 'uncommon' oder 'rare' bekommen pro vergangene
-// Minute einen kleinen Gewichts-Bonus (+0.5% uncommon, +1% rare),
-// sodass sich längere Reisen mehr lohnen für seltene Funde.
+// 2) WERKZEUG-LOTTERIE (2%/4%/6% pro Minute je nach Tier):
+//    Nur wenn passendes Werkzeug vorhanden. Droppt das werkzeugspezifische Item.
+//    Holz-Werkzeug: 2%, Stein: 4%, Kristall: 6%
+//    → Erwartung: ~2.4-7.2 extra Items bei 2h
 //
-// minTime = ab welcher Reise-Minute dieses Item im Loot-Pool ist
+// 3) SELTENHEITS-LOTTERIE (2% pro Minute, erst ab Minute 60):
+//    Seltene Items (Eisenerz, Kristall, Lehm). Kristall am seltensten.
+//    → Erwartung: ~1.2 seltene Items bei 2h
+//
+// GESAMT bei 2h ohne Tool: ~6 + 1.2 = ~7.2 Items
+// GESAMT bei 2h mit Stein-Tool: ~6 + 4.8 + 1.2 = ~12 Items
 
-import { getToolLootMultiplier, getActiveToolTypes } from '../systems/ToolSystem';
+import { getActiveToolTypes } from '../systems/ToolSystem';
 
 // --- Tuning-Konstanten ---
-export const DROP_CHANCE = 0.05;            // 5% pro Runde (Minute)
-export const TOOL_BONUS_DROP_CHANCE = 0.03; // 3% extra pro Runde mit Werkzeug
+export const BASE_DROP_CHANCE = 0.05;    // 5% pro Minute — Basis-Lotterie
+export const RARE_DROP_CHANCE = 0.02;    // 2% pro Minute — Seltenheits-Lotterie (ab Min 60)
+export const RARE_START_MINUTE = 60;     // Ab wann die Seltenheits-Lotterie startet
 
-// Seltenheits-Boost: Gewicht steigt pro Minute um diesen Faktor
-// Formel: effektivWeight = baseWeight * (1 + boost * vergangeneMinuten)
-export const RARITY_BOOST = {
-  common: 0,        // kein Boost
-  uncommon: 0.005,  // +0.5% pro Minute → nach 60 Min: +30%, nach 120 Min: +60%
-  rare: 0.01,       // +1.0% pro Minute → nach 60 Min: +60%, nach 120 Min: +120%
+// Werkzeug-Lotterie: Chance pro Tier
+export const TOOL_DROP_CHANCE = {
+  wood: 0.02,     // 2% pro Minute
+  stone: 0.04,    // 4% pro Minute
+  crystal: 0.06,  // 6% pro Minute
 };
 
-const lootTables = {
-  // =============================================
-  // WALD (Norden)
-  // =============================================
-  // Thema: Dichter Wald mit Unterholz, Bäche
-  // Primär: Holz & Waldfrüchte
-  // Sekundär: Lianen, Pilze, Bachwasser
-  north: {
-    name: 'Wald',
-    drops: [
-      // Nahrung (~35%)
-      { itemId: 'berry',       weight: 15, minTime: 0,  rarity: 'common' },
-      { itemId: 'mushroom',    weight: 8,  minTime: 5,  rarity: 'common' },
-      { itemId: 'fruit',       weight: 12, minTime: 5,  rarity: 'common' },
-      // Wasser (~10%): Kleine Bäche im Wald
-      { itemId: 'dirty_water', weight: 10, minTime: 0,  rarity: 'common' },
-      // Holz (~30%) – Wald ist DIE Holzquelle
-      { itemId: 'wood',        weight: 30, minTime: 0,  rarity: 'common' },
-      // Seltenes (~25%): Lianen überall im Dschungel
-      { itemId: 'vine',        weight: 17, minTime: 10, rarity: 'common' },
-      { itemId: 'coconut',     weight: 8,  minTime: 20, rarity: 'uncommon' },
-    ],
-    toolBonus: {
-      axe: [
-        { itemId: 'wood', weight: 100, minTime: 0, rarity: 'common' },
-      ],
-    },
-  },
+// --- Basis-Kategorien (gleich für alle Biome) ---
+// 25% Essen, 25% Holz, 25% Stein, 25% biomspezifisches "Rest"
+const BASE_CATEGORIES = {
+  food: 0.25,
+  wood: 0.25,
+  stone: 0.25,
+  special: 0.25,
+};
 
-  // =============================================
-  // SEE (Süden)
-  // =============================================
-  // Thema: Süßwassersee mit Ufer
-  // Primär: Wasser (höchster Anteil!) & Fisch (mit Angel)
-  // Sekundär: Seetang, Lehm, Treibholz
-  south: {
-    name: 'See',
-    drops: [
-      // Wasser (~45%) – DAS Wasser-Biom, höchster Anteil
-      { itemId: 'dirty_water', weight: 45, minTime: 0,  rarity: 'common' },
-      // Nahrung (~15%): Seetang am Ufer
-      { itemId: 'seaweed',     weight: 15, minTime: 0,  rarity: 'common' },
-      // Holz (~15%): Treibholz am Ufer
-      { itemId: 'wood',        weight: 15, minTime: 5,  rarity: 'common' },
-      // Stein (~10%): Kiesel am Ufer
-      { itemId: 'stone',       weight: 10, minTime: 5,  rarity: 'common' },
-      // Seltenes (~15%): Lehm & Lianen am Ufer
-      { itemId: 'clay',        weight: 10, minTime: 10, rarity: 'uncommon' },
-      { itemId: 'vine',        weight: 5,  minTime: 15, rarity: 'common' },
-    ],
-    toolBonus: {
-      fishing_rod: [
-        { itemId: 'fish', weight: 100, minTime: 0, rarity: 'common' },
-      ],
-    },
-  },
+// Essen-Pool pro Biom (welches Essen in welchem Biom droppt)
+const FOOD_POOLS = {
+  north: ['berry', 'mushroom', 'fruit', 'coconut'],
+  south: ['seaweed', 'fish', 'berry'],
+  west:  ['berry', 'coconut', 'mushroom', 'fruit'],
+  east:  ['berry', 'mushroom'],
+};
 
-  // =============================================
-  // FELDER (Westen)
-  // =============================================
-  // Thema: Offene Grasflächen, Büsche, vereinzelte Bäume
-  // Primär: Beeren, Kokosnüsse, Pilze – Nahrungsparadies
-  // Sekundär: Lianen, etwas Holz
-  west: {
-    name: 'Felder',
-    drops: [
-      // Nahrung (~50%) – Felder sind DAS Nahrungsbiom
-      { itemId: 'berry',    weight: 25, minTime: 0,  rarity: 'common' },
-      { itemId: 'coconut',  weight: 15, minTime: 5,  rarity: 'common' },
-      { itemId: 'mushroom', weight: 10, minTime: 10, rarity: 'common' },
-      // Holz (~20%): Vereinzelte Bäume
-      { itemId: 'wood',     weight: 20, minTime: 5,  rarity: 'common' },
-      // Seltenes (~30%): Viele Lianen, etwas Seetang
-      { itemId: 'vine',     weight: 20, minTime: 0,  rarity: 'common' },
-      { itemId: 'dirty_water', weight: 10, minTime: 10, rarity: 'common' },
-    ],
-    toolBonus: {},
-  },
+// "Rest"-Pool pro Biom (das 25% biomspezifische Segment)
+const SPECIAL_POOLS = {
+  north: ['vine', 'dirty_water', 'clay'],
+  south: ['dirty_water', 'vine', 'clay'],
+  west:  ['vine', 'dirty_water', 'tree_seed'],
+  east:  ['dirty_water', 'clay', 'vine'],
+};
 
-  // =============================================
-  // KLIPPEN (Osten)
-  // =============================================
-  // Thema: Felsige Steilküste, Höhlen
-  // Primär: Stein, Erz, Kristalle – DAS Bergbau-Biom
-  // Sekundär: Lehm, etwas Wasser aus Quellen
-  // Kaum Nahrung/Holz – gefährliches Biom für lange Trips
-  east: {
-    name: 'Klippen',
-    drops: [
-      // Wasser (~15%): Quellwasser aus Felsspalten
-      { itemId: 'dirty_water', weight: 15, minTime: 0,  rarity: 'common' },
-      // Holz (~5%): Fast kein Holz an den Klippen
-      { itemId: 'wood',        weight: 5,  minTime: 15, rarity: 'common' },
-      // Stein (~40%): Hauptressource
-      { itemId: 'stone',       weight: 40, minTime: 0,  rarity: 'common' },
-      // Seltenes (~40%): Lehm, Eisenerz, Kristalle
-      { itemId: 'clay',        weight: 15, minTime: 5,  rarity: 'common' },
-      { itemId: 'iron_ore',    weight: 15, minTime: 30, rarity: 'uncommon' },
-      { itemId: 'crystal',     weight: 10, minTime: 60, rarity: 'rare' },
-    ],
-    toolBonus: {
-      pickaxe: [
-        { itemId: 'stone',    weight: 40, minTime: 0,  rarity: 'common' },
-        { itemId: 'iron_ore', weight: 40, minTime: 15, rarity: 'uncommon' },
-        { itemId: 'crystal',  weight: 20, minTime: 30, rarity: 'rare' },
-      ],
-    },
-  },
+// Werkzeug-Item-Zuordnung (was droppt die Werkzeug-Lotterie)
+const TOOL_DROPS = {
+  axe:         'wood',
+  fishing_rod: 'fish',
+  pickaxe:     'stone',
+};
+
+// Welches Biom hat welches Werkzeug
+const BIOME_TOOL = {
+  north: 'axe',
+  south: 'fishing_rod',
+  west:  null,
+  east:  'pickaxe',
+};
+
+// Seltenheits-Pool pro Biom (Kristall immer am seltensten)
+const RARE_POOLS = {
+  north: [
+    { itemId: 'vine',     weight: 40 },
+    { itemId: 'clay',     weight: 35 },
+    { itemId: 'iron_ore', weight: 20 },
+    { itemId: 'crystal',  weight: 5 },
+  ],
+  south: [
+    { itemId: 'clay',     weight: 40 },
+    { itemId: 'vine',     weight: 30 },
+    { itemId: 'iron_ore', weight: 20 },
+    { itemId: 'crystal',  weight: 10 },
+  ],
+  west: [
+    { itemId: 'vine',     weight: 40 },
+    { itemId: 'clay',     weight: 30 },
+    { itemId: 'iron_ore', weight: 20 },
+    { itemId: 'crystal',  weight: 10 },
+  ],
+  east: [
+    { itemId: 'clay',     weight: 30 },
+    { itemId: 'iron_ore', weight: 40 },
+    { itemId: 'crystal',  weight: 15 },
+    { itemId: 'vine',     weight: 15 },
+  ],
+};
+
+// Biom-Namen (für UI)
+const BIOME_NAMES = {
+  north: 'Wald',
+  south: 'See',
+  west: 'Felder',
+  east: 'Klippen',
 };
 
 // ============================================
-// Loot-Berechnung
+// Loot-Berechnung: 3 unabhängige Lotterien
 // ============================================
 
-// Effektives Gewicht mit Seltenheits-Boost berechnen
-function getEffectiveWeight(drop, elapsedMinutes) {
-  const boost = RARITY_BOOST[drop.rarity] || 0;
-  return drop.weight * (1 + boost * elapsedMinutes);
+function pickRandom(array) {
+  return array[Math.floor(Math.random() * array.length)];
+}
+
+function pickWeighted(pool) {
+  const totalWeight = pool.reduce((sum, item) => sum + item.weight, 0);
+  let roll = Math.random() * totalWeight;
+  for (const item of pool) {
+    roll -= item.weight;
+    if (roll <= 0) return item.itemId;
+  }
+  return pool[pool.length - 1].itemId;
 }
 
 export function calculateLoot(biomeKey, durationMs, tools = []) {
-  const biome = lootTables[biomeKey];
-  if (!biome) return [];
+  if (!BIOME_NAMES[biomeKey]) return [];
 
   const durationMin = durationMs / (60 * 1000);
-  const rounds = Math.floor(durationMin); // 1 Runde pro Minute
+  const rounds = Math.floor(durationMin);
   const loot = {};
 
-  // --- Basis-Drops ---
+  const addLoot = (itemId) => {
+    loot[itemId] = (loot[itemId] || 0) + 1;
+  };
+
+  // ========================================
+  // LOTTERIE 1: Basis-Drops (5% pro Minute)
+  // 25% Essen, 25% Holz, 25% Stein, 25% Rest
+  // ========================================
   for (let minute = 1; minute <= rounds; minute++) {
-    // Schritt 1: Fällt überhaupt ein Item? (5% Chance)
-    if (Math.random() > DROP_CHANCE) continue;
+    if (Math.random() > BASE_DROP_CHANCE) continue;
 
-    // Verfügbare Drops für diese Minute (minTime-Filter)
-    const availableDrops = biome.drops.filter(d => minute >= d.minTime);
-    if (availableDrops.length === 0) continue;
+    // Kategorie auswürfeln
+    const catRoll = Math.random();
+    if (catRoll < BASE_CATEGORIES.food) {
+      // Essen
+      const pool = FOOD_POOLS[biomeKey];
+      addLoot(pickRandom(pool));
+    } else if (catRoll < BASE_CATEGORIES.food + BASE_CATEGORIES.wood) {
+      // Holz
+      addLoot('wood');
+    } else if (catRoll < BASE_CATEGORIES.food + BASE_CATEGORIES.wood + BASE_CATEGORIES.stone) {
+      // Stein
+      addLoot('stone');
+    } else {
+      // Biomspezifisches Rest-Item
+      const pool = SPECIAL_POOLS[biomeKey];
+      addLoot(pickRandom(pool));
+    }
+  }
 
-    // Schritt 2: Gewichte mit Seltenheits-Boost berechnen
-    const weights = availableDrops.map(d => getEffectiveWeight(d, minute));
-    const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+  // ========================================
+  // LOTTERIE 2: Werkzeug-Drops (2/4/6% pro Minute)
+  // Nur wenn passendes Werkzeug vorhanden
+  // ========================================
+  const biomeToolType = BIOME_TOOL[biomeKey];
+  if (biomeToolType) {
+    const activeTypes = getActiveToolTypes(tools);
+    if (activeTypes.includes(biomeToolType)) {
+      // Tier des besten Werkzeugs bestimmen
+      const bestTool = tools
+        .filter(t => t.toolType === biomeToolType && t.durability > 0)
+        .sort((a, b) => {
+          const tierOrder = ['wood', 'stone', 'crystal'];
+          return tierOrder.indexOf(b.tier) - tierOrder.indexOf(a.tier);
+        })[0];
 
-    // Schritt 3: Gewichteter Zufall
-    const roll = Math.random() * totalWeight;
-    let cumulative = 0;
+      if (bestTool) {
+        const toolChance = TOOL_DROP_CHANCE[bestTool.tier] || 0.02;
+        const toolItem = TOOL_DROPS[biomeToolType];
 
-    for (let i = 0; i < availableDrops.length; i++) {
-      cumulative += weights[i];
-      if (roll <= cumulative) {
-        const drop = availableDrops[i];
-        loot[drop.itemId] = (loot[drop.itemId] || 0) + 1;
-        break;
+        for (let minute = 1; minute <= rounds; minute++) {
+          if (Math.random() <= toolChance) {
+            addLoot(toolItem);
+          }
+        }
       }
     }
   }
 
-  // --- Werkzeug-Bonus-Drops ---
-  // tools ist jetzt ein Array von Objekten mit { toolType, tier, durability }
-  const activeToolTypes = getActiveToolTypes(tools);
-
-  for (const toolType of activeToolTypes) {
-    const bonusDrops = biome.toolBonus?.[toolType];
-    if (!bonusDrops || bonusDrops.length === 0) continue;
-
-    // Tier-Multiplikator: Holz = halber Bonus, Stein = normal, Kristall = 1.5x
-    const tierMult = getToolLootMultiplier(tools, toolType);
-
-    for (let minute = 1; minute <= rounds; minute++) {
-      // Drop-Chance mit Tier-Multiplikator
-      if (Math.random() > TOOL_BONUS_DROP_CHANCE * tierMult) continue;
-
-      const availableBonus = bonusDrops.filter(d => minute >= d.minTime);
-      if (availableBonus.length === 0) continue;
-
-      const weights = availableBonus.map(d => getEffectiveWeight(d, minute));
-      const totalWeight = weights.reduce((sum, w) => sum + w, 0);
-
-      const roll = Math.random() * totalWeight;
-      let cumulative = 0;
-
-      for (let i = 0; i < availableBonus.length; i++) {
-        cumulative += weights[i];
-        if (roll <= cumulative) {
-          const drop = availableBonus[i];
-          loot[drop.itemId] = (loot[drop.itemId] || 0) + 1;
-          break;
-        }
-      }
+  // ========================================
+  // LOTTERIE 3: Seltenheits-Drops (2% pro Minute, ab Minute 60)
+  // Kristall am seltensten
+  // ========================================
+  const rarePool = RARE_POOLS[biomeKey];
+  if (rarePool) {
+    for (let minute = RARE_START_MINUTE + 1; minute <= rounds; minute++) {
+      if (Math.random() > RARE_DROP_CHANCE) continue;
+      addLoot(pickWeighted(rarePool));
     }
   }
 
@@ -230,5 +211,10 @@ export function calculateLoot(biomeKey, durationMs, tools = []) {
     .map(([itemId, amount]) => ({ itemId, amount }))
     .sort((a, b) => a.itemId.localeCompare(b.itemId));
 }
+
+// Legacy-kompatibel: lootTables-Objekt mit Biom-Namen exportieren
+const lootTables = Object.fromEntries(
+  Object.entries(BIOME_NAMES).map(([key, name]) => [key, { name }])
+);
 
 export default lootTables;
