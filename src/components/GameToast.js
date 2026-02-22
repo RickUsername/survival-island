@@ -2,10 +2,12 @@
 // Generische Toast-Benachrichtigung
 // ============================================
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 
 export default function GameToast({ emoji, message, onDismiss, duration = 4000 }) {
   const [visible, setVisible] = useState(false);
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
 
   useEffect(() => {
     if (!message) return;
@@ -16,14 +18,17 @@ export default function GameToast({ emoji, message, onDismiss, duration = 4000 }
     // Nach duration ausblenden
     const hideTimer = setTimeout(() => {
       setVisible(false);
-      setTimeout(onDismiss, 400);
+      // Nach Fade-Out-Animation onDismiss aufrufen
+      setTimeout(() => {
+        if (onDismissRef.current) onDismissRef.current();
+      }, 400);
     }, duration);
 
     return () => {
       clearTimeout(showTimer);
       clearTimeout(hideTimer);
     };
-  }, [message, onDismiss, duration]);
+  }, [message, duration]); // onDismiss bewusst NICHT in Dependencies (Ref stattdessen)
 
   if (!message) return null;
 

@@ -15,9 +15,16 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
   const canvasRef = useRef(null);
   const animFrame = useRef(null);
 
-  // Pinch-to-Zoom: Zoom-Level (1.0 = Standard, 0.5 = rausgezoomt, 2.0 = reingezoomt)
+  // Pinch-to-Zoom: Zoom-Level (1.0 = Standard, rausgezoomt bis gesamte Map sichtbar)
   const [zoomLevel, setZoomLevel] = useState(1.0);
   const pinchRef = useRef({ active: false, startDist: 0, startZoom: 1.0 });
+
+  // Minimaler Zoom: Gesamte Map muss ins Display passen
+  const minZoom = Math.min(
+    (canvasSize.width / MAP_WIDTH) / Math.max(canvasSize.width / MAP_WIDTH, canvasSize.height / MAP_HEIGHT),
+    (canvasSize.height / MAP_HEIGHT) / Math.max(canvasSize.width / MAP_WIDTH, canvasSize.height / MAP_HEIGHT),
+    0.7
+  );
 
   // Skalierung berechnen damit Map den Viewport ausfüllt
   const getScale = useCallback(() => {
@@ -1780,10 +1787,10 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       const dist = Math.sqrt(dx * dx + dy * dy);
       const ratio = dist / pinchRef.current.startDist;
-      const newZoom = Math.max(0.7, Math.min(2.0, pinchRef.current.startZoom * ratio));
+      const newZoom = Math.max(minZoom, Math.min(2.0, pinchRef.current.startZoom * ratio));
       setZoomLevel(newZoom);
     }
-  }, []);
+  }, [minZoom]);
 
   const handleTouchEnd = useCallback((e) => {
     if (e.touches.length < 2) {
