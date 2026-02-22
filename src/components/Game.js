@@ -21,6 +21,9 @@ import AchievementsPanel from './AchievementsPanel';
 import AchievementToast from './AchievementToast';
 import DemolishDialog from './DemolishDialog';
 import AnimalInfoDialog from './AnimalInfoDialog';
+import CatInfoDialog from './CatInfoDialog';
+import GameToast from './GameToast';
+import AnimalDismissDialog from './AnimalDismissDialog';
 import {
   startGathering,
   pauseGathering,
@@ -29,6 +32,7 @@ import {
 } from '../systems/GatheringSystem';
 import { drainToolDurability, hasToolOfTier, getBestTool } from '../systems/ToolSystem';
 import { checkAnimalSpawn, createAnimal, getRandomGrassPosition, ANIMAL_TYPES, feedAnimal } from '../systems/AnimalSystem';
+import { createCat, petCat, feedCat, canPetCat } from '../systems/CatSystem';
 import { checkAchievements, applyAchievements } from '../systems/AchievementSystem';
 import { useAuth } from '../contexts/AuthContext';
 import items from '../data/items';
@@ -71,6 +75,14 @@ export default function Game() {
   const [demolishConfirm, setDemolishConfirm] = useState(null);
   // Tier-Info-Dialog: { id, type, hunger, ... }
   const [animalInfo, setAnimalInfo] = useState(null);
+  // Katzen-Info-Dialog: { id, type, affection, ... }
+  const [catInfo, setCatInfo] = useState(null);
+  // Generische Toast-Benachrichtigung: { emoji, message }
+  const [gameToast, setGameToast] = useState(null);
+  // Doppel-Bestätigung beim Wegschicken: 0 = kein Dialog, 1 = erste Bestätigung, 2 = zweite Bestätigung
+  const [dismissStep, setDismissStep] = useState(0);
+  // Tier das weggeschickt werden soll (für Doppel-Bestätigung)
+  const [dismissTarget, setDismissTarget] = useState(null);
   // Baumfäll-Dialog: { type: 'main'|'planted', col, row, index? }
   const [treeFellConfirm, setTreeFellConfirm] = useState(null);
 
@@ -112,6 +124,38 @@ export default function Game() {
     }, 30000);
     return () => clearInterval(interval);
   }, [isDead, setGameState]);
+
+  // iOS: Seiten-Zoom komplett verhindern (gesturestart/gesturechange + touchmove mit 2+ Fingern)
+  useEffect(() => {
+    const preventZoom = (e) => e.preventDefault();
+    const preventMultiTouch = (e) => {
+      if (e.touches.length > 1) e.preventDefault();
+    };
+
+    document.addEventListener('gesturestart', preventZoom, { passive: false });
+    document.addEventListener('gesturechange', preventZoom, { passive: false });
+    document.addEventListener('gestureend', preventZoom, { passive: false });
+    // Nur auf dem Document-Level (Canvas hat eigenen Pinch-Handler)
+    document.addEventListener('touchmove', preventMultiTouch, { passive: false });
+
+    return () => {
+      document.removeEventListener('gesturestart', preventZoom);
+      document.removeEventListener('gesturechange', preventZoom);
+      document.removeEventListener('gestureend', preventZoom);
+      document.removeEventListener('touchmove', preventMultiTouch);
+    };
+  }, []);
+
+  // Ei-Schlüpf-Toast: wenn _catHatched Flag gesetzt, Toast anzeigen und Flag löschen
+  useEffect(() => {
+    if (gameState?._catHatched) {
+      setGameToast({ emoji: '🐱', message: 'Das Ei ist geschlüpft! Eine Katze ist geboren!' });
+      setGameState(prev => {
+        const { _catHatched, ...rest } = prev;
+        return rest;
+      });
+    }
+  }, [gameState?._catHatched, setGameState]);
 
   // Canvas-Größe an Fenster anpassen
   useEffect(() => {
@@ -432,7 +476,7 @@ export default function Game() {
   // Touch-Steuerung (Klick auf Karte)
   const handleMapClick = useCallback((worldX, worldY) => {
     if (!gameState || gameState.gathering || gameState.vacation.isActive) return;
-    if (showInventory || showCrafting || biomePrompt || demolishConfirm || animalInfo || treeFellConfirm) return;
+    if (showInventory || showCrafting || biomePrompt || demolishConfirm || animalInfo || catInfo || treeFellConfirm) return;
 
     const col = Math.floor(worldX / TILE_SIZE);
     const row = Math.floor(worldY / TILE_SIZE);
@@ -476,7 +520,11 @@ export default function Game() {
       return dist < (animalDef?.size || 20) * 0.8;
     });
     if (clickedAnimal) {
-      setAnimalInfo(clickedAnimal);
+      if (clickedAnimal.type === 'cat') {
+        setCatInfo(clickedAnimal);
+      } else {
+        setAnimalInfo(clickedAnimal);
+      }
       return;
     }
 
@@ -556,7 +604,7 @@ export default function Game() {
         }));
       }
     }
-  }, [gameState, showInventory, showCrafting, biomePrompt, demolishConfirm, animalInfo, treeFellConfirm, placementMode, setGameState, manualSave, checkExitAfterMove, handlePlaceBuilding, handlePlantTree]);
+  }, [gameState, showInventory, showCrafting, biomePrompt, demolishConfirm, animalInfo, catInfo, treeFellConfirm, placementMode, setGameState, manualSave, checkExitAfterMove, handlePlaceBuilding, handlePlantTree]);
 
   // Baum faellen (Kristallaxt noetig)
   const handleFellTree = useCallback(() => {
@@ -661,18 +709,39 @@ export default function Game() {
     setTimeout(() => manualSave(), 0);
   }, [demolishConfirm, setGameState, manualSave]);
 
-  // Tier wegschicken
-  const handleDismissAnimal = useCallback(() => {
-    if (!animalInfo) return;
+  // Tier/Katze wegschicken - Doppel-Bestätigung starten
+  const handleStartDismiss = useCallback((animal) => {
+    setDismissTarget(animal);
+    setDismissStep(1);
+    // Info-Dialoge schließen
+    setAnimalInfo(null);
+    setCatInfo(null);
+  }, []);
+
+  // Erste Bestätigung → Zweite Bestätigung
+  const handleDismissFirstConfirm = useCallback(() => {
+    setDismissStep(2);
+  }, []);
+
+  // Zweite (endgültige) Bestätigung → Tier entfernen
+  const handleDismissFinalConfirm = useCallback(() => {
+    if (!dismissTarget) return;
 
     setGameState(prev => {
-      const newAnimals = (prev.animals || []).filter(a => a.id !== animalInfo.id);
+      const newAnimals = (prev.animals || []).filter(a => a.id !== dismissTarget.id);
       return { ...prev, animals: newAnimals };
     });
 
-    setAnimalInfo(null);
+    setDismissTarget(null);
+    setDismissStep(0);
     setTimeout(() => manualSave(), 0);
-  }, [animalInfo, setGameState, manualSave]);
+  }, [dismissTarget, setGameState, manualSave]);
+
+  // Dismiss abbrechen
+  const handleCancelDismiss = useCallback(() => {
+    setDismissTarget(null);
+    setDismissStep(0);
+  }, []);
 
   // Tier füttern (mit Obst oder Beeren)
   const handleFeedAnimal = useCallback((foodItemId) => {
@@ -714,6 +783,56 @@ export default function Game() {
 
     setTimeout(() => manualSave(), 0);
   }, [animalInfo, setGameState, manualSave]);
+
+  // Katze streicheln
+  const handlePetCat = useCallback(() => {
+    if (!catInfo) return;
+    if (!canPetCat(catInfo)) return;
+
+    setGameState(prev => {
+      const newAnimals = (prev.animals || []).map(a => {
+        if (a.id === catInfo.id) return petCat(a);
+        return a;
+      });
+      const updatedCat = newAnimals.find(a => a.id === catInfo.id);
+      if (updatedCat) setTimeout(() => setCatInfo(updatedCat), 0);
+      return { ...prev, animals: newAnimals };
+    });
+    setTimeout(() => manualSave(), 0);
+  }, [catInfo, setGameState, manualSave]);
+
+  // Katze füttern (erhöht Zuneigung)
+  const handleFeedCat = useCallback((foodItemId) => {
+    if (!catInfo) return;
+
+    setGameState(prev => {
+      // Prüfen ob Item im Inventar
+      if (!prev.inventory[foodItemId] || prev.inventory[foodItemId].amount <= 0) return prev;
+
+      // Item verbrauchen
+      const newInventory = { ...prev.inventory };
+      newInventory[foodItemId] = {
+        ...newInventory[foodItemId],
+        amount: newInventory[foodItemId].amount - 1,
+      };
+      if (newInventory[foodItemId].amount <= 0) {
+        delete newInventory[foodItemId];
+      }
+
+      // Katze füttern
+      const newAnimals = (prev.animals || []).map(a => {
+        if (a.id === catInfo.id) return feedCat(a, foodItemId);
+        return a;
+      });
+
+      // Dialog aktualisieren
+      const updatedCat = newAnimals.find(a => a.id === catInfo.id);
+      if (updatedCat) setTimeout(() => setCatInfo(updatedCat), 0);
+
+      return { ...prev, inventory: newInventory, animals: newAnimals };
+    });
+    setTimeout(() => manualSave(), 0);
+  }, [catInfo, setGameState, manualSave]);
 
   // Sammelreise starten
   const handleStartGathering = useCallback((direction, topicId = null, targetDuration = null) => {
@@ -1049,6 +1168,29 @@ export default function Game() {
     } else if (command.type === 'show_list') {
       // Cheat-Liste anzeigen
       setShowCheatList(true);
+    } else if (command.type === 'spawn_cat') {
+      // Katze direkt spawnen
+      const pos = getRandomGrassPosition();
+      const cat = createCat(pos.x, pos.y);
+      setGameState(prev => ({
+        ...prev,
+        animals: [...(prev.animals || []), cat],
+      }));
+      setTimeout(() => manualSave(), 0);
+    } else if (command.type === 'set_cat_age') {
+      // Katzenalter setzen (alle Katzen)
+      const targetAge = command.value;
+      const newSpawnedAt = Date.now() - targetAge * 24 * 60 * 60 * 1000;
+      setGameState(prev => ({
+        ...prev,
+        animals: (prev.animals || []).map(a => {
+          if (a.type === 'cat') {
+            return { ...a, spawnedAt: newSpawnedAt };
+          }
+          return a;
+        }),
+      }));
+      setTimeout(() => manualSave(), 0);
     }
   }, [setGameState, manualSave]);
 
@@ -1363,8 +1505,39 @@ export default function Game() {
           animal={animalInfo}
           inventory={gameState.inventory}
           onFeed={handleFeedAnimal}
-          onDismiss={handleDismissAnimal}
+          onDismiss={() => handleStartDismiss(animalInfo)}
           onClose={() => setAnimalInfo(null)}
+        />
+      )}
+
+      {/* Katzen-Info-Dialog */}
+      {catInfo && (
+        <CatInfoDialog
+          cat={catInfo}
+          inventory={gameState.inventory}
+          onPet={handlePetCat}
+          onFeed={handleFeedCat}
+          onDismiss={() => handleStartDismiss(catInfo)}
+          onClose={() => setCatInfo(null)}
+        />
+      )}
+
+      {/* Tier-Wegschicken-Dialog (Doppel-Bestätigung) */}
+      {dismissStep > 0 && dismissTarget && (
+        <AnimalDismissDialog
+          animal={dismissTarget}
+          isSecondConfirm={dismissStep === 2}
+          onConfirm={dismissStep === 1 ? handleDismissFirstConfirm : handleDismissFinalConfirm}
+          onCancel={handleCancelDismiss}
+        />
+      )}
+
+      {/* Generische Toast-Benachrichtigung */}
+      {gameToast && (
+        <GameToast
+          emoji={gameToast.emoji}
+          message={gameToast.message}
+          onDismiss={() => setGameToast(null)}
         />
       )}
 

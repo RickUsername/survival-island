@@ -61,6 +61,9 @@ const SPECIAL_CHEATS = {
   'holzaxt': { type: 'add_tool', value: 'wood_axe', label: '🪓 Holzaxt erhalten' },
   // Inventar leeren
   'inventar0': { type: 'clear_inventory', label: '🗑️ Inventar & Werkzeuge geleert' },
+  // Katzen-Cheats
+  'ei': { type: 'item', itemId: 'mysterious_egg', amount: 1, label: '🥚 Mysteriöses Ei erhalten' },
+  'katze': { type: 'spawn_cat', label: '🐱 Katze gespawnt' },
   // Cheat-Liste anzeigen
   'liste': { type: 'show_list', label: 'Cheat-Liste geöffnet' },
 };
@@ -79,6 +82,18 @@ function parseCheatCode(code) {
   const special = SPECIAL_CHEATS[rest];
   if (special) {
     return { ...special, cheatType: 'special' };
+  }
+
+  // Katzenalter-Cheat: rickkatzenalter<tage>
+  const catAgeMatch = rest.match(/^katzenalter(\d+)$/);
+  if (catAgeMatch) {
+    const days = parseInt(catAgeMatch[1], 10);
+    return {
+      type: 'set_cat_age',
+      value: days,
+      label: `🐱 Katzenalter auf ${days} Tage gesetzt`,
+      cheatType: 'special',
+    };
   }
 
   // Zahl am Ende extrahieren

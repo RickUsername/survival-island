@@ -11,6 +11,7 @@ export const ANIMAL_TYPES = {
   goat:   { id: 'goat',   name: 'Ziege',  biome: 'east',  color: '#C4A882', size: 26 },
   deer:   { id: 'deer',   name: 'Reh',    biome: 'north', color: '#A0522D', size: 28 },
   rabbit: { id: 'rabbit', name: 'Hase',   biome: 'west',  color: '#D2B48C', size: 18 },
+  cat:    { id: 'cat',    name: 'Katze',  biome: null,    color: '#F5A623', size: 20 },
 };
 
 // Hunger-Konfiguration
@@ -137,10 +138,12 @@ export function createAnimal(typeId, x, y) {
 }
 
 // Tier-Bewegung updaten (wird pro Frame aufgerufen)
+// Katzen werden übersprungen — sie nutzen CatSystem.updateCatBehavior()
 export function updateAnimals(animals, deltaMs) {
   if (!animals || animals.length === 0) return animals;
 
   return animals.map(animal => {
+    if (animal.type === 'cat') return animal; // Katzen haben eigene State-Machine
     const a = { ...animal };
     a.stateTimer -= deltaMs;
 
@@ -221,6 +224,12 @@ export function updateAnimalHunger(animals, deltaSec) {
   const diedAnimals = [];
 
   for (const animal of animals) {
+    // Katzen nutzen Zuneigung statt Hunger (CatSystem)
+    if (animal.type === 'cat') {
+      updatedAnimals.push(animal);
+      continue;
+    }
+
     const hunger = (animal.hunger ?? ANIMAL_HUNGER_MAX) - ANIMAL_HUNGER_DRAIN_PER_SEC * deltaSec;
 
     if (hunger <= 0) {

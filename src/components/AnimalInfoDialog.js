@@ -48,6 +48,7 @@ export default function AnimalInfoDialog({ animal, inventory, onFeed, onDismiss,
             {animal.type === 'heron' && '🐦'}
             {animal.type === 'goat' && '🐐'}
             {animal.type === 'rabbit' && '🐇'}
+            {animal.type === 'cat' && '🐱'}
           </div>
           <div>
             <h3 style={styles.title}>{name}</h3>

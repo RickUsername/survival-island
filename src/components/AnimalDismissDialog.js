@@ -1,11 +1,11 @@
 // ============================================
-// Tier-Wegschicken-Dialog - Bestätigung
+// Tier-Wegschicken-Dialog - Bestätigung (mit Doppel-Bestätigung)
 // ============================================
 
 import React from 'react';
 import { ANIMAL_TYPES } from '../systems/AnimalSystem';
 
-export default function AnimalDismissDialog({ animal, onConfirm, onCancel }) {
+export default function AnimalDismissDialog({ animal, onConfirm, onCancel, isSecondConfirm = false }) {
   if (!animal) return null;
 
   const def = ANIMAL_TYPES[animal.type];
@@ -14,19 +14,37 @@ export default function AnimalDismissDialog({ animal, onConfirm, onCancel }) {
   return (
     <div style={styles.overlay} onClick={onCancel}>
       <div style={styles.panel} onClick={e => e.stopPropagation()}>
-        <h3 style={styles.title}>Tier wegschicken?</h3>
+        <h3 style={{
+          ...styles.title,
+          color: isSecondConfirm ? '#ef4444' : '#e67e22',
+        }}>
+          {isSecondConfirm ? 'Bist du WIRKLICH sicher?' : 'Tier wegschicken?'}
+        </h3>
         <p style={styles.text}>
-          Möchtest du <strong>{name}</strong> wirklich wegschicken?
+          {isSecondConfirm ? (
+            <>
+              <strong>{name}</strong> wird <strong>FÜR IMMER</strong> gehen.
+              Diese Aktion kann NICHT rückgängig gemacht werden!
+            </>
+          ) : (
+            <>Möchtest du <strong>{name}</strong> wirklich wegschicken?</>
+          )}
         </p>
         <p style={styles.info}>
-          Das Tier verlässt die Insel und kommt nicht wieder.
+          {isSecondConfirm
+            ? 'Letzter Schritt — danach ist das Tier für immer weg.'
+            : 'Das Tier verlässt die Insel und kommt nicht wieder.'
+          }
         </p>
         <div style={styles.buttons}>
           <button style={styles.cancelBtn} onClick={onCancel}>
             Behalten
           </button>
-          <button style={styles.confirmBtn} onClick={onConfirm}>
-            Wegschicken
+          <button style={{
+            ...styles.confirmBtn,
+            backgroundColor: isSecondConfirm ? '#ef4444' : '#e67e22',
+          }} onClick={onConfirm}>
+            {isSecondConfirm ? 'Endgültig wegschicken' : 'Wegschicken'}
           </button>
         </div>
       </div>
@@ -57,7 +75,6 @@ const styles = {
     textAlign: 'center',
   },
   title: {
-    color: '#e67e22',
     fontSize: '18px',
     margin: '0 0 12px',
   },
@@ -88,7 +105,6 @@ const styles = {
   },
   confirmBtn: {
     padding: '10px 24px',
-    backgroundColor: '#e67e22',
     color: '#fff',
     border: 'none',
     borderRadius: '8px',

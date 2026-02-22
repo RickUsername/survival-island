@@ -214,6 +214,22 @@ export function loadGame(userId) {
       }
     }
 
+    // Migration: Katzen-Felder ergänzen (Zuneigung, Verhalten)
+    if (gameState.animals && gameState.animals.length > 0) {
+      gameState.animals = gameState.animals.map(a => {
+        if (a.type === 'cat') {
+          return {
+            ...a,
+            affection: a.affection ?? 100,
+            lastPettedAt: a.lastPettedAt ?? null,
+            catState: a.catState ?? 'idle',
+            catStateTimer: a.catStateTimer ?? 5000,
+          };
+        }
+        return a;
+      });
+    }
+
     // Migration: Bestehende Gebäude in placedBuildings übertragen
     if (gameState.buildings) {
       const hasPlaced = (type) => gameState.placedBuildings.some(b => b.type === type);

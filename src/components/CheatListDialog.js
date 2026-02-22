@@ -23,6 +23,15 @@ const CHEAT_CATEGORIES = [
     ],
   },
   {
+    title: 'Katzen',
+    cheats: [
+      { code: 'rickei', desc: 'Mysteriöses Ei erhalten' },
+      { code: 'rickkatze', desc: 'Katze spawnen' },
+      { code: 'rickkatzenalter30', desc: 'Katzenalter auf 30 Tage' },
+      { code: 'rickkatzenalter365', desc: 'Katze erwachsen machen' },
+    ],
+  },
+  {
     title: 'Baum',
     cheats: [
       { code: 'rickbaum1 - rickbaum10', desc: 'Baumstufe setzen (1-10)' },

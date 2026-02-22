@@ -16,17 +16,15 @@ export default function AchievementToast({ achievementId, onDismiss }) {
     // Einblenden
     const showTimer = setTimeout(() => setVisible(true), 50);
 
-    // Nach 3.5s ausblenden
-    const hideTimer = setTimeout(() => {
-      setVisible(false);
-      setTimeout(onDismiss, 400);
-    }, 3500);
-
     return () => {
       clearTimeout(showTimer);
-      clearTimeout(hideTimer);
     };
-  }, [achievementId, onDismiss]);
+  }, [achievementId]);
+
+  const handleDismiss = () => {
+    setVisible(false);
+    setTimeout(onDismiss, 400);
+  };
 
   if (!achievement) return null;
 
@@ -44,6 +42,7 @@ export default function AchievementToast({ achievementId, onDismiss }) {
           <span style={styles.label}>Errungenschaft freigeschaltet!</span>
           <span style={styles.name}>{achievement.name}</span>
         </div>
+        <button style={styles.okBtn} onClick={handleDismiss}>OK</button>
       </div>
     </div>
   );
@@ -88,5 +87,18 @@ const styles = {
     color: '#fff',
     fontSize: '16px',
     fontWeight: 'bold',
+  },
+  okBtn: {
+    marginLeft: '12px',
+    padding: '6px 16px',
+    backgroundColor: 'rgba(255, 215, 0, 0.25)',
+    color: '#ffd700',
+    border: '1px solid rgba(255, 215, 0, 0.5)',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: 'bold',
+    whiteSpace: 'nowrap',
+    pointerEvents: 'auto',
   },
 };

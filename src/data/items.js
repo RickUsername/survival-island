@@ -293,6 +293,15 @@ const items = {
     description: 'Ein Samen vom Baum. Kann eingepflanzt werden.',
     plantable: true,
   },
+
+  // --- Mysteriöses Ei (Katzen-System) ---
+  mysterious_egg: {
+    id: 'mysterious_egg',
+    name: 'Mysteriöses Ei',
+    category: 'special',
+    color: '#E8D5B7',
+    description: 'Ein seltsames, warmes Ei. Etwas bewegt sich darin...',
+  },
 };
 
 export default items;

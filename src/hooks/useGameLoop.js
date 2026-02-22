@@ -9,7 +9,8 @@ import { updateNeeds, calculateOfflineNeeds, checkDeath, updateWaterCollector } 
 import { checkWeatherUpdate, getCurrentWeather } from '../systems/WeatherSystem';
 import { checkVacationExpiry } from '../systems/VacationSystem';
 import { SAVE_INTERVAL, TILE_SIZE, COLLISION_TILES, MAP_COLS, MAP_ROWS, FOOD_SPOIL_TIME, TILE_TYPES, HUNGER_DRAIN_PER_SEC, THIRST_DRAIN_PER_SEC, MOOD_DRAIN_PER_SEC, SHELTER_MOOD_MODIFIERS, WEATHER_TYPES } from '../utils/constants';
-import { updateAnimals, updateAnimalHunger, checkTreeFruitDrop, checkTreeSeedDrop, checkAnimalSpawn } from '../systems/AnimalSystem';
+import { updateAnimals, updateAnimalHunger, checkTreeFruitDrop, checkTreeSeedDrop, checkAnimalSpawn, getRandomGrassPosition } from '../systems/AnimalSystem';
+import { checkEggHatch, createCat, updateCatBehavior, updateCatAffection } from '../systems/CatSystem';
 import { finishGathering, getElapsedGatheringTime, isGatheringComplete } from '../systems/GatheringSystem';
 import { drainToolDurability } from '../systems/ToolSystem';
 import { isWaterCollectorActive } from '../systems/NeedsSystem';
@@ -308,6 +309,38 @@ export default function useGameLoop() {
       }
     }
 
+    // Offline Katzen-Zuneigung nachrechnen
+    if (!state.vacation.isActive && state.animals && state.animals.length > 0 && state.lastUpdate) {
+      const offlineSecs = (Date.now() - state.lastUpdate) / 1000;
+      if (offlineSecs > 0) {
+        state.animals = state.animals.map(a => {
+          if (a.type === 'cat') return updateCatAffection(a, offlineSecs);
+          return a;
+        });
+      }
+    }
+
+    // Offline Ei-Schlüpf-Check
+    if (!state.vacation.isActive) {
+      const eggCheck = checkEggHatch(state.inventory);
+      if (eggCheck.shouldHatch) {
+        const newInventory = { ...state.inventory };
+        newInventory.mysterious_egg = {
+          ...newInventory.mysterious_egg,
+          amount: newInventory.mysterious_egg.amount - 1,
+        };
+        if (newInventory.mysterious_egg.amount <= 0) {
+          delete newInventory.mysterious_egg;
+        }
+        state.inventory = newInventory;
+
+        const pos = getRandomGrassPosition();
+        const newCat = createCat(pos.x, pos.y);
+        state.animals = [...(state.animals || []), newCat];
+        state._catHatched = true;
+      }
+    }
+
     // Wetter aktualisieren (Override beibehalten wenn gesetzt)
     if (!state.weatherOverride) {
       state.weather = getCurrentWeather();
@@ -418,6 +451,34 @@ export default function useGameLoop() {
           updated.weeds = growWeeds(updated.weeds);
         }
 
+        // Katzen-Zuneigung drain
+        if (updated.animals && updated.animals.length > 0) {
+          updated.animals = updated.animals.map(a => {
+            if (a.type === 'cat') return updateCatAffection(a, delta);
+            return a;
+          });
+        }
+
+        // Ei-Schlüpf-Check
+        const eggCheck = checkEggHatch(updated.inventory);
+        if (eggCheck.shouldHatch) {
+          const newInventory = { ...updated.inventory };
+          newInventory.mysterious_egg = {
+            ...newInventory.mysterious_egg,
+            amount: newInventory.mysterious_egg.amount - 1,
+          };
+          if (newInventory.mysterious_egg.amount <= 0) {
+            delete newInventory.mysterious_egg;
+          }
+          updated.inventory = newInventory;
+
+          // Katze spawnen
+          const pos = getRandomGrassPosition();
+          const newCat = createCat(pos.x, pos.y);
+          updated.animals = [...(updated.animals || []), newCat];
+          updated._catHatched = true;
+        }
+
         return updated;
       });
     }, 1000);
@@ -471,7 +532,12 @@ export default function useGameLoop() {
 
       setGameState(prev => {
         if (!prev || !prev.animals || prev.animals.length === 0) return prev;
-        const updatedAnimals = updateAnimals(prev.animals, 200); // 200ms Tick
+        let updatedAnimals = updateAnimals(prev.animals, 200); // 200ms Tick (überspringt Katzen)
+        // Katzen-Bewegung separat updaten
+        updatedAnimals = updatedAnimals.map(a => {
+          if (a.type === 'cat') return updateCatBehavior(a, 200);
+          return a;
+        });
         return { ...prev, animals: updatedAnimals };
       });
     }, 200);

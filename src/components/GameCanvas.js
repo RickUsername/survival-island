@@ -9,6 +9,7 @@ import {
 } from '../utils/constants';
 import homeMap, { TREE_POSITION } from '../data/homeMap';
 import { ANIMAL_TYPES, ANIMAL_HUNGER_MAX } from '../systems/AnimalSystem';
+import { getCatStage, CAT_AFFECTION_MAX } from '../systems/CatSystem';
 
 export default function GameCanvas({ gameState, onMapClick, onMouseMove, placementGhost, canvasSize }) {
   const canvasRef = useRef(null);
@@ -1012,6 +1013,162 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
           break;
         }
 
+        case 'cat': {
+          // Katze — Kätzchen (65% Größe) oder Erwachsen (100%)
+          const catStage = getCatStage(animal.spawnedAt);
+          const catScale = catStage === 'kitten' ? 0.65 : 1.0;
+          const cs = s * catScale;
+          const cHalf = cs / 2;
+          const isSleeping = animal.catState === 'sleeping';
+          const isWalking = animal.catState === 'slow_walk' || animal.catState === 'fast_walk';
+          const walkSpeed = animal.catState === 'fast_walk' ? 120 : 200;
+
+          // Schatten
+          ctx.fillStyle = 'rgba(0,0,0,0.15)';
+          ctx.beginPath();
+          ctx.ellipse(ax, ay + cHalf + 2, cHalf * 0.7, 3 * catScale, 0, 0, Math.PI * 2);
+          ctx.fill();
+
+          if (isSleeping) {
+            // Schlafend: zusammengerollt
+            ctx.fillStyle = '#F5A623';
+            ctx.beginPath();
+            ctx.ellipse(ax, ay + 2, cHalf * 0.6, cHalf * 0.4, 0, 0, Math.PI * 2);
+            ctx.fill();
+            // Kopf auf Körper
+            ctx.fillStyle = '#E09510';
+            ctx.beginPath();
+            ctx.arc(ax + cHalf * 0.3, ay - cHalf * 0.1, cHalf * 0.3, 0, Math.PI * 2);
+            ctx.fill();
+            // Geschlossene Augen (Striche)
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(ax + cHalf * 0.2, ay - cHalf * 0.15);
+            ctx.lineTo(ax + cHalf * 0.4, ay - cHalf * 0.15);
+            ctx.stroke();
+            // Schwanz eingerollt
+            ctx.strokeStyle = '#E09510';
+            ctx.lineWidth = 2 * catScale;
+            ctx.beginPath();
+            ctx.arc(ax - cHalf * 0.2, ay + cHalf * 0.15, cHalf * 0.35, 0.5, Math.PI * 1.5);
+            ctx.stroke();
+            // z z z
+            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.font = `${8 * catScale}px sans-serif`;
+            const bob = Math.sin(Date.now() / 600) * 2;
+            ctx.fillText('z', ax + cHalf * 0.5, ay - cHalf * 0.5 + bob);
+            ctx.fillText('z', ax + cHalf * 0.7, ay - cHalf * 0.8 + bob * 0.7);
+          } else {
+            // Wach: stehend / laufend
+            // Körper
+            ctx.fillStyle = '#F5A623';
+            ctx.beginPath();
+            ctx.ellipse(ax, ay + 2, cHalf * 0.6, cHalf * 0.45, 0, 0, Math.PI * 2);
+            ctx.fill();
+            // Kopf
+            ctx.fillStyle = '#E09510';
+            ctx.beginPath();
+            ctx.arc(ax + cHalf * 0.5, ay - cHalf * 0.15, cHalf * 0.32, 0, Math.PI * 2);
+            ctx.fill();
+            // Ohren (Dreiecke)
+            ctx.fillStyle = '#F5A623';
+            ctx.beginPath();
+            ctx.moveTo(ax + cHalf * 0.3, ay - cHalf * 0.4);
+            ctx.lineTo(ax + cHalf * 0.2, ay - cHalf * 0.75);
+            ctx.lineTo(ax + cHalf * 0.45, ay - cHalf * 0.45);
+            ctx.closePath();
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(ax + cHalf * 0.55, ay - cHalf * 0.4);
+            ctx.lineTo(ax + cHalf * 0.75, ay - cHalf * 0.75);
+            ctx.lineTo(ax + cHalf * 0.7, ay - cHalf * 0.35);
+            ctx.closePath();
+            ctx.fill();
+            // Ohr-Inneres (rosa)
+            ctx.fillStyle = '#FFB6C1';
+            ctx.beginPath();
+            ctx.moveTo(ax + cHalf * 0.32, ay - cHalf * 0.42);
+            ctx.lineTo(ax + cHalf * 0.25, ay - cHalf * 0.65);
+            ctx.lineTo(ax + cHalf * 0.43, ay - cHalf * 0.45);
+            ctx.closePath();
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(ax + cHalf * 0.57, ay - cHalf * 0.42);
+            ctx.lineTo(ax + cHalf * 0.7, ay - cHalf * 0.65);
+            ctx.lineTo(ax + cHalf * 0.67, ay - cHalf * 0.37);
+            ctx.closePath();
+            ctx.fill();
+            // Augen
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(ax + cHalf * 0.42, ay - cHalf * 0.2, 1.5 * catScale, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(ax + cHalf * 0.58, ay - cHalf * 0.2, 1.5 * catScale, 0, Math.PI * 2);
+            ctx.fill();
+            // Nase (kleines rosa Dreieck)
+            ctx.fillStyle = '#FF69B4';
+            ctx.beginPath();
+            ctx.moveTo(ax + cHalf * 0.5, ay - cHalf * 0.08);
+            ctx.lineTo(ax + cHalf * 0.46, ay - cHalf * 0.02);
+            ctx.lineTo(ax + cHalf * 0.54, ay - cHalf * 0.02);
+            ctx.closePath();
+            ctx.fill();
+            // Schnurrhaare
+            ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+            ctx.lineWidth = 0.5;
+            // Links
+            ctx.beginPath();
+            ctx.moveTo(ax + cHalf * 0.35, ay - cHalf * 0.05);
+            ctx.lineTo(ax + cHalf * 0.05, ay - cHalf * 0.12);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(ax + cHalf * 0.35, ay);
+            ctx.lineTo(ax + cHalf * 0.05, ay + cHalf * 0.05);
+            ctx.stroke();
+            // Rechts
+            ctx.beginPath();
+            ctx.moveTo(ax + cHalf * 0.65, ay - cHalf * 0.05);
+            ctx.lineTo(ax + cHalf * 0.95, ay - cHalf * 0.12);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(ax + cHalf * 0.65, ay);
+            ctx.lineTo(ax + cHalf * 0.95, ay + cHalf * 0.05);
+            ctx.stroke();
+            // Schwanz (kurviger Strich)
+            ctx.strokeStyle = '#E09510';
+            ctx.lineWidth = 2.5 * catScale;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(ax - cHalf * 0.55, ay + 2);
+            ctx.quadraticCurveTo(
+              ax - cHalf * 0.9, ay - cHalf * 0.3,
+              ax - cHalf * 0.7, ay - cHalf * 0.5
+            );
+            ctx.stroke();
+            ctx.lineCap = 'butt';
+            // Beine (mit Laufanimation)
+            ctx.strokeStyle = '#E09510';
+            ctx.lineWidth = 2 * catScale;
+            const cLegOff = isWalking ? Math.sin(Date.now() / walkSpeed) * 3 * catScale : 0;
+            ctx.beginPath();
+            ctx.moveTo(ax - cHalf * 0.25, ay + cHalf * 0.3);
+            ctx.lineTo(ax - cHalf * 0.25, ay + cHalf + cLegOff);
+            ctx.moveTo(ax + cHalf * 0.15, ay + cHalf * 0.3);
+            ctx.lineTo(ax + cHalf * 0.15, ay + cHalf - cLegOff);
+            ctx.stroke();
+            // Hinterbeine
+            ctx.beginPath();
+            ctx.moveTo(ax - cHalf * 0.1, ay + cHalf * 0.3);
+            ctx.lineTo(ax - cHalf * 0.1, ay + cHalf - cLegOff * 0.5);
+            ctx.moveTo(ax + cHalf * 0.3, ay + cHalf * 0.3);
+            ctx.lineTo(ax + cHalf * 0.3, ay + cHalf + cLegOff * 0.5);
+            ctx.stroke();
+          }
+          break;
+        }
+
         default:
           // Fallback: einfacher Kreis
           ctx.fillStyle = def.color;
@@ -1023,27 +1180,59 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
 
       ctx.restore();
 
-      // Hunger-Balken über dem Tier zeichnen
-      const hunger = animal.hunger ?? ANIMAL_HUNGER_MAX;
-      const hungerPercent = Math.max(0, Math.min(1, hunger / ANIMAL_HUNGER_MAX));
-      const barW = 24;
-      const barH = 3;
-      const barX = ax - barW / 2;
-      const barY = ay - half - 10;
+      // Katzen: Zuneigungsbalken (rosa) statt Hungerbalken
+      if (animal.type === 'cat') {
+        const affection = animal.affection ?? CAT_AFFECTION_MAX;
+        const affectionPercent = Math.max(0, Math.min(1, affection / CAT_AFFECTION_MAX));
+        const barW = 24;
+        const barH = 3;
+        const catStageForBar = getCatStage(animal.spawnedAt);
+        const catScaleForBar = catStageForBar === 'kitten' ? 0.65 : 1.0;
+        const cHalfForBar = (s * catScaleForBar) / 2;
+        const barX = ax - barW / 2;
+        const barY = ay - cHalfForBar - 10;
 
-      // Hintergrund (dunkel)
-      ctx.fillStyle = 'rgba(0,0,0,0.5)';
-      ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+        // Hintergrund
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
 
-      // Füll-Farbe je nach Hunger-Level
-      if (hungerPercent > 0.5) {
-        ctx.fillStyle = '#2ecc71'; // grün
-      } else if (hungerPercent > 0.2) {
-        ctx.fillStyle = '#f1c40f'; // gelb
+        // Füll-Farbe
+        if (affectionPercent > 0.5) {
+          ctx.fillStyle = '#FF69B4'; // rosa
+        } else if (affectionPercent > 0.2) {
+          ctx.fillStyle = '#f1c40f'; // gelb
+        } else {
+          ctx.fillStyle = '#e74c3c'; // rot
+        }
+        ctx.fillRect(barX, barY, barW * affectionPercent, barH);
+
+        // Kleines Herz-Icon
+        ctx.fillStyle = '#FF69B4';
+        ctx.font = '7px sans-serif';
+        ctx.fillText('❤', barX - 9, barY + barH);
       } else {
-        ctx.fillStyle = '#e74c3c'; // rot
+        // Normale Tiere: Hunger-Balken
+        const hunger = animal.hunger ?? ANIMAL_HUNGER_MAX;
+        const hungerPercent = Math.max(0, Math.min(1, hunger / ANIMAL_HUNGER_MAX));
+        const barW = 24;
+        const barH = 3;
+        const barX = ax - barW / 2;
+        const barY = ay - half - 10;
+
+        // Hintergrund (dunkel)
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+
+        // Füll-Farbe je nach Hunger-Level
+        if (hungerPercent > 0.5) {
+          ctx.fillStyle = '#2ecc71'; // grün
+        } else if (hungerPercent > 0.2) {
+          ctx.fillStyle = '#f1c40f'; // gelb
+        } else {
+          ctx.fillStyle = '#e74c3c'; // rot
+        }
+        ctx.fillRect(barX, barY, barW * hungerPercent, barH);
       }
-      ctx.fillRect(barX, barY, barW * hungerPercent, barH);
     }
   }, [gameState]);
 
@@ -1491,7 +1680,7 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       const dist = Math.sqrt(dx * dx + dy * dy);
       const ratio = dist / pinchRef.current.startDist;
-      const newZoom = Math.max(0.4, Math.min(3.0, pinchRef.current.startZoom * ratio));
+      const newZoom = Math.max(0.7, Math.min(2.0, pinchRef.current.startZoom * ratio));
       setZoomLevel(newZoom);
     }
   }, []);
