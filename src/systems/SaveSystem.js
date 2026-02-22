@@ -4,6 +4,7 @@
 
 import { STORAGE_KEY } from '../utils/constants';
 import { migrateTools } from './ToolSystem';
+import { syncUp, fullSync } from './CloudSaveService';
 
 // Standard-Spielstand für neues Spiel
 export function getDefaultGameState() {
@@ -92,6 +93,15 @@ export function getDefaultGameState() {
       startedAt: Date.now(),
       totalGatheringTrips: 0,
       totalItemsCollected: 0,
+      hasMainTreeFelled: false,
+      hasCookedMeal: false,
+    },
+
+    // Errungenschaften - überleben den Tod
+    achievements: {
+      unlockedIds: [],
+      lastUnlocked: null,
+      lastUnlockedAt: null,
     },
   };
 }
@@ -169,6 +179,19 @@ export function loadGame() {
       gameState.diary = { topics: [], activeTopicId: null };
     }
 
+    // Migration: Errungenschaften ergänzen
+    if (!gameState.achievements) {
+      gameState.achievements = { unlockedIds: [], lastUnlocked: null, lastUnlockedAt: null };
+    }
+
+    // Migration: Neue Stats-Flags
+    if (gameState.stats.hasMainTreeFelled === undefined) {
+      gameState.stats.hasMainTreeFelled = false;
+    }
+    if (gameState.stats.hasCookedMeal === undefined) {
+      gameState.stats.hasCookedMeal = false;
+    }
+
     // Migration: Tier-Hunger ergänzen (alte Tiere ohne hunger-Feld)
     if (gameState.animals && gameState.animals.length > 0) {
       let hungerMigrated = false;
@@ -216,9 +239,13 @@ export function loadGame() {
 
 // Spielstand löschen (bei Tod)
 export function resetGame() {
-  // Tagebuch beibehalten
   const oldState = loadGame();
+
+  // Tagebuch beibehalten
   const diaryData = oldState?.diary || { topics: [], activeTopicId: null };
+
+  // Errungenschaften beibehalten
+  const achievementsData = oldState?.achievements || { unlockedIds: [], lastUnlocked: null, lastUnlockedAt: null };
 
   const newState = getDefaultGameState();
 
@@ -231,9 +258,59 @@ export function resetGame() {
   };
   newState.diary = {
     ...diaryData,
-    activeTopicId: null, // Aktive Reise zurücksetzen, Themen bleiben
+    activeTopicId: null,
   };
+  newState.achievements = achievementsData;
 
   saveGame(newState);
+  return newState;
+}
+
+
+// ============================================
+// Cloud-Save Wrapper-Funktionen
+// localStorage bleibt primär, Cloud synchronisiert im Hintergrund
+// ============================================
+
+// Cloud-erweitertes Speichern: localStorage + Cloud-Upload
+export async function saveGameWithCloud(gameState, userId) {
+  // Immer zuerst lokal speichern (bestehende Logik, schlägt nie fehl)
+  saveGame(gameState);
+
+  // Dann Cloud-Sync versuchen (fire-and-forget, Fehler sind still)
+  if (userId) {
+    await syncUp(userId, gameState).catch(() => {});
+  }
+}
+
+// Cloud-erweitertes Laden: localStorage laden, dann mit Cloud abgleichen
+export async function loadGameWithCloud(userId) {
+  // Immer zuerst lokal laden (bestehende Logik)
+  const localState = loadGame();
+
+  if (!userId) {
+    return localState; // Nicht eingeloggt → nur localStorage
+  }
+
+  // Mit Cloud synchronisieren
+  const { synced, state: resolvedState, direction } = await fullSync(userId, localState);
+
+  if (synced && direction === 'down' && resolvedState) {
+    // Cloud hatte neuere Daten → lokal speichern und mit Migrationen laden
+    saveGame(resolvedState);
+    return loadGame(); // Lädt erneut mit allen Migrationen
+  }
+
+  return localState;
+}
+
+// Cloud-erweiterter Reset: lokal zurücksetzen + Cloud aktualisieren
+export async function resetGameWithCloud(userId) {
+  const newState = resetGame(); // bestehende Logik
+
+  if (userId) {
+    await syncUp(userId, newState).catch(() => {});
+  }
+
   return newState;
 }

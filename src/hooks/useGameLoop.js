@@ -3,7 +3,8 @@
 // ============================================
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { loadGame, saveGame, getDefaultGameState, resetGame } from '../systems/SaveSystem';
+import { loadGame, saveGame, getDefaultGameState, resetGame, saveGameWithCloud, loadGameWithCloud, resetGameWithCloud } from '../systems/SaveSystem';
+import { useAuth } from '../contexts/AuthContext';
 import { updateNeeds, calculateOfflineNeeds, checkDeath, updateWaterCollector } from '../systems/NeedsSystem';
 import { checkWeatherUpdate, getCurrentWeather } from '../systems/WeatherSystem';
 import { checkVacationExpiry } from '../systems/VacationSystem';
@@ -110,6 +111,12 @@ export default function useGameLoop() {
   const [deathCause, setDeathCause] = useState(null);
   const [showLoot, setShowLoot] = useState(null);
 
+  // Auth-Kontext für Cloud-Sync
+  const { user } = useAuth();
+  const userId = user?.id || null;
+  const userIdRef = useRef(userId);
+  useEffect(() => { userIdRef.current = userId; }, [userId]);
+
   // Ref für aktuellen State (damit Intervals immer den neuesten haben)
   const gameStateRef = useRef(null);
   const lastFrameTime = useRef(Date.now());
@@ -143,7 +150,16 @@ export default function useGameLoop() {
 
   // Spielstand laden oder neu erstellen
   useEffect(() => {
-    let state = loadGame();
+    const initGame = async () => {
+    let state;
+    try {
+      state = await loadGameWithCloud(userId);
+    } catch (err) {
+      console.warn('Cloud-Load fehlgeschlagen, nutze localStorage:', err);
+    }
+    if (!state) {
+      state = loadGame(); // Fallback: nur localStorage
+    }
     if (!state) {
       state = getDefaultGameState();
     }
@@ -306,6 +322,9 @@ export default function useGameLoop() {
 
     setGameState(state);
     lastFrameTime.current = Date.now();
+    }; // Ende initGame
+
+    initGame();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -418,6 +437,32 @@ export default function useGameLoop() {
     return () => clearInterval(saveInterval);
   }, []); // Läuft einmalig, kein Neustart bei State-Änderung
 
+  // Cloud-Save – alle 60 Sekunden (nicht bei jedem Auto-Save!)
+  useEffect(() => {
+    if (!userId) return; // Nicht eingeloggt → kein Cloud-Sync
+
+    const cloudSaveInterval = setInterval(() => {
+      const current = gameStateRef.current;
+      if (current) {
+        saveGameWithCloud(current, userIdRef.current).catch(() => {});
+      }
+    }, 60 * 1000); // Alle 60 Sekunden
+
+    return () => clearInterval(cloudSaveInterval);
+  }, [userId]);
+
+  // localStorage speichern bei Seite-Schließen (Cloud holt beim nächsten Start nach)
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const current = gameStateRef.current;
+      if (current) {
+        saveGame(current); // localStorage ist synchron und zuverlässig
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
+
   // Tier-Bewegungs-Loop (schneller als Game-Loop für flüssige Bewegung)
   useEffect(() => {
     const animalInterval = setInterval(() => {
@@ -505,8 +550,13 @@ export default function useGameLoop() {
   }, [gameState, checkExit]);
 
   // Spieler-Tod behandeln
-  const handleDeath = useCallback(() => {
-    const newState = resetGame();
+  const handleDeath = useCallback(async () => {
+    let newState;
+    if (userIdRef.current) {
+      newState = await resetGameWithCloud(userIdRef.current);
+    } else {
+      newState = resetGame();
+    }
     setGameState(newState);
     setIsDead(false);
     setDeathCause(null);
@@ -578,10 +628,13 @@ export default function useGameLoop() {
     });
   }, []);
 
-  // Manueller Save
+  // Manueller Save (lokal + Cloud bei wichtigen Aktionen)
   const manualSave = useCallback(() => {
     if (gameStateRef.current) {
-      saveGame(gameStateRef.current);
+      saveGame(gameStateRef.current); // Immer lokal zuerst
+      if (userIdRef.current) {
+        saveGameWithCloud(gameStateRef.current, userIdRef.current).catch(() => {});
+      }
     }
   }, []);
 

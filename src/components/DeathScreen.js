@@ -36,7 +36,7 @@ export default function DeathScreen({ cause, onRestart }) {
 
         <p style={styles.resetInfo}>
           Dein Spielstand wird zurückgesetzt.
-          Urlaubstage und Tagebuch bleiben erhalten.
+          Urlaubstage, Tagebuch und Errungenschaften bleiben erhalten.
         </p>
 
         <button style={styles.restartBtn} onClick={onRestart}>

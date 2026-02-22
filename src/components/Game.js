@@ -17,6 +17,8 @@ import BiomePrompt from './BiomePrompt';
 import CheatConsole from './CheatConsole';
 import CheatListDialog from './CheatListDialog';
 import DiaryPanel from './DiaryPanel';
+import AchievementsPanel from './AchievementsPanel';
+import AchievementToast from './AchievementToast';
 import DemolishDialog from './DemolishDialog';
 import AnimalInfoDialog from './AnimalInfoDialog';
 import {
@@ -27,6 +29,8 @@ import {
 } from '../systems/GatheringSystem';
 import { drainToolDurability, hasToolOfTier, getBestTool } from '../systems/ToolSystem';
 import { checkAnimalSpawn, createAnimal, getRandomGrassPosition, ANIMAL_TYPES, feedAnimal } from '../systems/AnimalSystem';
+import { checkAchievements, applyAchievements } from '../systems/AchievementSystem';
+import { useAuth } from '../contexts/AuthContext';
 import items from '../data/items';
 import { PLAYER_SPEED, TILE_SIZE, TILE_TYPES } from '../utils/constants';
 import homeMap, { EXIT_ZONES, TREE_POSITION } from '../data/homeMap';
@@ -45,11 +49,15 @@ export default function Game() {
     manualSave,
   } = useGameLoop();
 
+  const { user, isAdmin, signOut } = useAuth();
+
   const [showInventory, setShowInventory] = useState(false);
   const [showCrafting, setShowCrafting] = useState(false);
   const [showCheats, setShowCheats] = useState(false);
   const [showCheatList, setShowCheatList] = useState(false);
   const [showDiary, setShowDiary] = useState(false);
+  const [showAchievements, setShowAchievements] = useState(false);
+  const [achievementToast, setAchievementToast] = useState(null);
   const [biomePrompt, setBiomePrompt] = useState(null);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
   const [toolbarExpanded, setToolbarExpanded] = useState(false);
@@ -74,6 +82,36 @@ export default function Game() {
   useEffect(() => {
     gameStateRef.current = gameState;
   }, [gameState]);
+
+  // Errungenschaften prüfen und ggf. Toast anzeigen
+  const checkAndApplyAchievements = useCallback(() => {
+    setTimeout(() => {
+      const current = gameStateRef.current;
+      if (!current) return;
+      const newIds = checkAchievements(current);
+      if (newIds.length > 0) {
+        const updated = applyAchievements(current, newIds);
+        setGameState(updated);
+        setAchievementToast(newIds[0]);
+      }
+    }, 50);
+  }, [setGameState]);
+
+  // Periodische Achievement-Prüfung (zeitbasiert: daysAlive, Lernzeit)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (gameStateRef.current && !isDead) {
+        const current = gameStateRef.current;
+        const newIds = checkAchievements(current);
+        if (newIds.length > 0) {
+          const updated = applyAchievements(current, newIds);
+          setGameState(updated);
+          setAchievementToast(newIds[0]);
+        }
+      }
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [isDead, setGameState]);
 
   // Canvas-Größe an Fenster anpassen
   useEffect(() => {
@@ -131,6 +169,7 @@ export default function Game() {
         if (key === 'i') setShowInventory(v => !v);
         if (key === 'c') setShowCrafting(v => !v);
         if (key === 't') setShowDiary(v => !v);
+        if (key === 'e') setShowAchievements(v => !v);
       }
     };
 
@@ -337,8 +376,8 @@ export default function Game() {
 
     setPlacementMode(null);
     setPlacementGhost(null);
-    setTimeout(() => manualSave(), 0);
-  }, [placementMode, gameState, isTileValidForPlacement, setGameState, manualSave]);
+    setTimeout(() => { manualSave(); checkAndApplyAchievements(); }, 0);
+  }, [placementMode, gameState, isTileValidForPlacement, setGameState, manualSave, checkAndApplyAchievements]);
 
   // Baum pflanzen (Klick im Pflanz-Modus)
   const handlePlantTree = useCallback((col, row) => {
@@ -381,8 +420,8 @@ export default function Game() {
 
     setPlacementMode(null);
     setPlacementGhost(null);
-    setTimeout(() => manualSave(), 0);
-  }, [gameState, isTileValidForPlacement, setGameState, manualSave]);
+    setTimeout(() => { manualSave(); checkAndApplyAchievements(); }, 0);
+  }, [gameState, isTileValidForPlacement, setGameState, manualSave, checkAndApplyAchievements]);
 
   // Pflanzen-Modus aktivieren (aus Inventar heraus)
   const handleStartPlanting = useCallback(() => {
@@ -568,12 +607,16 @@ export default function Game() {
         inventory: newInventory,
         plantedTrees: newPlantedTrees,
         treeStage: newTreeStage,
+        stats: {
+          ...prev.stats,
+          hasMainTreeFelled: prev.stats.hasMainTreeFelled || treeFellConfirm.type === 'main',
+        },
       };
     });
 
     setTreeFellConfirm(null);
-    setTimeout(() => manualSave(), 0);
-  }, [treeFellConfirm, setGameState, manualSave]);
+    setTimeout(() => { manualSave(); checkAndApplyAchievements(); }, 0);
+  }, [treeFellConfirm, setGameState, manualSave, checkAndApplyAchievements]);
 
   // Gebäude abreißen
   const handleDemolish = useCallback(() => {
@@ -808,8 +851,9 @@ export default function Game() {
         setShowLoot(lootResult);
       }
       manualSave(); // Sofort speichern nach Loot
+      checkAndApplyAchievements();
     }, 0);
-  }, [setGameState, setShowLoot, manualSave]);
+  }, [setGameState, setShowLoot, manualSave, checkAndApplyAchievements]);
 
   // Urlaub ändern
   const handleVacationChange = useCallback((newVacation) => {
@@ -821,6 +865,12 @@ export default function Game() {
 
   // Crafting-Ergebnis anwenden
   const handleCraft = useCallback((newState) => {
+    // Koch-Achievement: Flag setzen wenn Essen gekocht wird
+    const cookedItems = ['cooked_berry', 'cooked_fish', 'cooked_mushroom', 'fruit_salad'];
+    if (cookedItems.some(id => newState.inventory?.[id]?.amount > 0)) {
+      newState = { ...newState, stats: { ...newState.stats, hasCookedMeal: true } };
+    }
+
     // Prüfen ob ein Gebäude-Placement ansteht
     if (newState._pendingPlacement) {
       const pending = newState._pendingPlacement;
@@ -833,13 +883,13 @@ export default function Game() {
       setPlacementMode(pending);
       setShowCrafting(false); // Crafting-Panel schließen
 
-      setTimeout(() => manualSave(), 0);
+      setTimeout(() => { manualSave(); checkAndApplyAchievements(); }, 0);
       return;
     }
 
     setGameState(newState);
-    setTimeout(() => manualSave(), 0); // Sofort speichern nach Crafting
-  }, [setGameState, manualSave]);
+    setTimeout(() => { manualSave(); checkAndApplyAchievements(); }, 0);
+  }, [setGameState, manualSave, checkAndApplyAchievements]);
 
   // Loot-Screen schließen
   const handleCloseLoot = useCallback(() => {
@@ -1106,6 +1156,18 @@ export default function Game() {
             </div>
           </div>
 
+          {/* Cloud-Indikator (nur wenn eingeloggt) */}
+          {user && (
+            <div style={styles.cloudIndicator}>
+              <span style={{ color: '#4a8c3f', fontSize: '11px' }}>
+                ☁️ {user.user_metadata?.username || user.email?.split('@')[0] || 'Angemeldet'}
+              </span>
+              <button style={styles.signOutBtn} onClick={signOut}>
+                Abmelden
+              </button>
+            </div>
+          )}
+
           {/* Platzierungsmodus-Banner */}
           {placementMode && (
             <div style={styles.placementBanner}>
@@ -1125,7 +1187,7 @@ export default function Game() {
                 style={styles.bottomBarToggle}
                 onClick={() => setToolbarExpanded(!toolbarExpanded)}
               >
-                <span style={{ fontSize: '16px' }}>🎒🔨📖🔧</span>
+                <span style={{ fontSize: '16px' }}>🎒🔨📖🏆{isAdmin ? '🔧' : ''}</span>
                 <span style={styles.toggleArrow}>{toolbarExpanded ? '▼' : '▲'}</span>
               </div>
               {toolbarExpanded && (
@@ -1155,12 +1217,22 @@ export default function Game() {
                     <span style={styles.btnHint}>[T]</span>
                   </button>
                   <button
-                    style={{ ...styles.actionBtn, borderColor: 'rgba(230,126,34,0.4)' }}
-                    onClick={() => setShowCheats(true)}
+                    style={{ ...styles.actionBtn, borderColor: 'rgba(255,215,0,0.4)' }}
+                    onClick={() => setShowAchievements(true)}
                   >
-                    <span style={styles.btnIcon}>🔧</span>
-                    <span style={styles.btnLabel}>Cheats</span>
+                    <span style={styles.btnIcon}>🏆</span>
+                    <span style={styles.btnLabel}>Erfolge</span>
+                    <span style={styles.btnHint}>[E]</span>
                   </button>
+                  {isAdmin && (
+                    <button
+                      style={{ ...styles.actionBtn, borderColor: 'rgba(230,126,34,0.4)' }}
+                      onClick={() => setShowCheats(true)}
+                    >
+                      <span style={styles.btnIcon}>🔧</span>
+                      <span style={styles.btnLabel}>Cheats</span>
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -1205,8 +1277,8 @@ export default function Game() {
         />
       )}
 
-      {/* Cheat-Konsole */}
-      {showCheats && (
+      {/* Cheat-Konsole (nur für Admins) */}
+      {isAdmin && showCheats && (
         <CheatConsole
           onAddItem={handleCheatAddItem}
           onCheatCommand={handleCheatCommand}
@@ -1214,8 +1286,8 @@ export default function Game() {
         />
       )}
 
-      {/* Cheat-Liste (verschiebbar, bleibt offen) */}
-      {showCheatList && (
+      {/* Cheat-Liste (nur für Admins) */}
+      {isAdmin && showCheatList && (
         <CheatListDialog onClose={() => setShowCheatList(false)} />
       )}
 
@@ -1226,6 +1298,22 @@ export default function Game() {
           onAddTopic={handleAddTopic}
           onDeleteTopic={handleDeleteTopic}
           onClose={() => setShowDiary(false)}
+        />
+      )}
+
+      {/* Errungenschaften */}
+      {showAchievements && (
+        <AchievementsPanel
+          achievements={gameState.achievements}
+          onClose={() => setShowAchievements(false)}
+        />
+      )}
+
+      {/* Achievement-Toast */}
+      {achievementToast && (
+        <AchievementToast
+          achievementId={achievementToast}
+          onDismiss={() => setAchievementToast(null)}
         />
       )}
 
@@ -1509,5 +1597,27 @@ const styles = {
     cursor: 'pointer',
     fontSize: '14px',
     fontWeight: 'bold',
+  },
+  cloudIndicator: {
+    position: 'fixed',
+    top: '4px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '4px 12px',
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    borderRadius: '0 0 8px 8px',
+    zIndex: 10,
+    pointerEvents: 'auto',
+  },
+  signOutBtn: {
+    background: 'none',
+    border: 'none',
+    color: '#666',
+    cursor: 'pointer',
+    fontSize: '10px',
+    padding: '2px 6px',
   },
 };
