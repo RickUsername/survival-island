@@ -6,6 +6,11 @@ import { STORAGE_KEY } from '../utils/constants';
 import { migrateTools } from './ToolSystem';
 import { syncUp, fullSync } from './CloudSaveService';
 
+// Hilfsfunktion: User-spezifischer localStorage-Key
+function getStorageKey(userId) {
+  return userId ? `${STORAGE_KEY}-${userId}` : STORAGE_KEY;
+}
+
 // Standard-Spielstand für neues Spiel
 export function getDefaultGameState() {
   return {
@@ -106,11 +111,11 @@ export function getDefaultGameState() {
   };
 }
 
-// Spielstand speichern
-export function saveGame(gameState) {
+// Spielstand speichern (userId optional für User-spezifischen Key)
+export function saveGame(gameState, userId) {
   try {
     const serialized = JSON.stringify(gameState);
-    localStorage.setItem(STORAGE_KEY, serialized);
+    localStorage.setItem(getStorageKey(userId), serialized);
     return true;
   } catch (e) {
     console.error('Fehler beim Speichern:', e);
@@ -118,10 +123,10 @@ export function saveGame(gameState) {
   }
 }
 
-// Spielstand laden
-export function loadGame() {
+// Spielstand laden (userId optional für User-spezifischen Key)
+export function loadGame(userId) {
   try {
-    const serialized = localStorage.getItem(STORAGE_KEY);
+    const serialized = localStorage.getItem(getStorageKey(userId));
     if (!serialized) return null;
 
     const gameState = JSON.parse(serialized);
@@ -237,9 +242,9 @@ export function loadGame() {
   }
 }
 
-// Spielstand löschen (bei Tod)
-export function resetGame() {
-  const oldState = loadGame();
+// Spielstand löschen (bei Tod) — userId optional für User-spezifischen Key
+export function resetGame(userId) {
+  const oldState = loadGame(userId);
 
   // Tagebuch beibehalten
   const diaryData = oldState?.diary || { topics: [], activeTopicId: null };
@@ -262,7 +267,7 @@ export function resetGame() {
   };
   newState.achievements = achievementsData;
 
-  saveGame(newState);
+  saveGame(newState, userId);
   return newState;
 }
 
@@ -274,8 +279,8 @@ export function resetGame() {
 
 // Cloud-erweitertes Speichern: localStorage + Cloud-Upload
 export async function saveGameWithCloud(gameState, userId) {
-  // Immer zuerst lokal speichern (bestehende Logik, schlägt nie fehl)
-  saveGame(gameState);
+  // Immer zuerst lokal speichern (user-spezifischer Key)
+  saveGame(gameState, userId);
 
   // Dann Cloud-Sync versuchen (fire-and-forget, Fehler sind still)
   if (userId) {
@@ -285,8 +290,8 @@ export async function saveGameWithCloud(gameState, userId) {
 
 // Cloud-erweitertes Laden: localStorage laden, dann mit Cloud abgleichen
 export async function loadGameWithCloud(userId) {
-  // Immer zuerst lokal laden (bestehende Logik)
-  const localState = loadGame();
+  // Immer zuerst lokal laden (user-spezifischer Key)
+  const localState = loadGame(userId);
 
   if (!userId) {
     return localState; // Nicht eingeloggt → nur localStorage
@@ -297,8 +302,8 @@ export async function loadGameWithCloud(userId) {
 
   if (synced && direction === 'down' && resolvedState) {
     // Cloud hatte neuere Daten → lokal speichern und mit Migrationen laden
-    saveGame(resolvedState);
-    return loadGame(); // Lädt erneut mit allen Migrationen
+    saveGame(resolvedState, userId);
+    return loadGame(userId); // Lädt erneut mit allen Migrationen
   }
 
   return localState;
@@ -306,7 +311,7 @@ export async function loadGameWithCloud(userId) {
 
 // Cloud-erweiterter Reset: lokal zurücksetzen + Cloud aktualisieren
 export async function resetGameWithCloud(userId) {
-  const newState = resetGame(); // bestehende Logik
+  const newState = resetGame(userId); // user-spezifischer Key
 
   if (userId) {
     await syncUp(userId, newState).catch(() => {});

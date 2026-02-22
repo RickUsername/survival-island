@@ -35,7 +35,7 @@ function AppContent() {
     return <LoginScreen onSkip={() => setSkippedLogin(true)} />;
   }
 
-  return <Game />;
+  return <Game key={user?.id ?? 'guest'} />;
 }
 
 function App() {
