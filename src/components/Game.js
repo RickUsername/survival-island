@@ -1618,6 +1618,11 @@ export default function Game() {
                   vacation={gameState.vacation}
                   onVacationChange={handleVacationChange}
                 />
+                {user && (
+                  <button style={styles.signOutBtn} onClick={signOut}>
+                    Abmelden
+                  </button>
+                )}
               </div>
             )}
 
@@ -1636,9 +1641,6 @@ export default function Game() {
               <span style={{ color: '#4a8c3f', fontSize: '11px' }}>
                 ☁️ {user.user_metadata?.username || user.email?.split('@')[0] || 'Angemeldet'}
               </span>
-              <button style={styles.signOutBtn} onClick={signOut}>
-                Abmelden
-              </button>
             </div>
           )}
 
@@ -2189,11 +2191,13 @@ const styles = {
     pointerEvents: 'auto',
   },
   signOutBtn: {
-    background: 'none',
-    border: 'none',
-    color: '#666',
+    background: 'rgba(231, 76, 60, 0.2)',
+    border: '1px solid rgba(231, 76, 60, 0.4)',
+    borderRadius: '6px',
+    color: '#e74c3c',
     cursor: 'pointer',
-    fontSize: '10px',
-    padding: '2px 6px',
+    fontSize: '11px',
+    padding: '4px 10px',
+    marginTop: '6px',
   },
 };
