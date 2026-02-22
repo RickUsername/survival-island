@@ -2,7 +2,7 @@
 // Spiel-Canvas - Rendert die Karte und den Spieler
 // ============================================
 
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useRef, useEffect, useCallback, useState } from 'react';
 import {
   TILE_SIZE, MAP_COLS, MAP_ROWS, MAP_WIDTH, MAP_HEIGHT,
   TILE_COLORS, TILE_TYPES,
@@ -14,12 +14,16 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
   const canvasRef = useRef(null);
   const animFrame = useRef(null);
 
+  // Pinch-to-Zoom: Zoom-Level (1.0 = Standard, 0.5 = rausgezoomt, 2.0 = reingezoomt)
+  const [zoomLevel, setZoomLevel] = useState(1.0);
+  const pinchRef = useRef({ active: false, startDist: 0, startZoom: 1.0 });
+
   // Skalierung berechnen damit Map den Viewport ausfüllt
   const getScale = useCallback(() => {
     const scaleX = canvasSize.width / MAP_WIDTH;
     const scaleY = canvasSize.height / MAP_HEIGHT;
-    return Math.max(scaleX, scaleY); // cover (Map füllt Viewport komplett)
-  }, [canvasSize]);
+    return Math.max(scaleX, scaleY) * zoomLevel; // cover × Zoom
+  }, [canvasSize, zoomLevel]);
 
   // Kamera-Offset berechnen (Spieler zentriert, skaliert)
   const getCameraOffset = useCallback(() => {
@@ -1465,6 +1469,54 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
       onMouseMove(col, row);
     }
   }, [onMouseMove, screenToWorld]);
+
+  // Pinch-to-Zoom Touch-Handler
+  const handleTouchStart = useCallback((e) => {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      pinchRef.current = {
+        active: true,
+        startDist: Math.sqrt(dx * dx + dy * dy),
+        startZoom: zoomLevel,
+      };
+    }
+  }, [zoomLevel]);
+
+  const handleTouchMove = useCallback((e) => {
+    if (e.touches.length === 2 && pinchRef.current.active) {
+      e.preventDefault();
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const ratio = dist / pinchRef.current.startDist;
+      const newZoom = Math.max(0.4, Math.min(3.0, pinchRef.current.startZoom * ratio));
+      setZoomLevel(newZoom);
+    }
+  }, []);
+
+  const handleTouchEnd = useCallback((e) => {
+    if (e.touches.length < 2) {
+      pinchRef.current.active = false;
+    }
+  }, []);
+
+  // Touch-Events auf Canvas registrieren (passive: false für preventDefault)
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+    canvas.addEventListener('touchend', handleTouchEnd);
+
+    return () => {
+      canvas.removeEventListener('touchstart', handleTouchStart);
+      canvas.removeEventListener('touchmove', handleTouchMove);
+      canvas.removeEventListener('touchend', handleTouchEnd);
+    };
+  }, [handleTouchStart, handleTouchMove, handleTouchEnd]);
 
   return (
     <canvas

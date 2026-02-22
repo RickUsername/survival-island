@@ -18,7 +18,7 @@ html, body, #root {
   -moz-osx-font-smoothing: grayscale;
   user-select: none;
   -webkit-user-select: none;
-  touch-action: manipulation;
+  touch-action: pan-x pan-y;
 }
 
 /* Puls-Animation für kritische Bedürfnisse */
@@ -66,5 +66,24 @@ button:active {
   button {
     min-height: 44px;
     min-width: 44px;
+  }
+}
+
+/* Hochformat-Anpassungen (schmale Screens) */
+@media (max-width: 600px) and (orientation: portrait) {
+  /* Safe Area für iPhone-Notch */
+  html, body, #root {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+}
+
+/* Kleine Screens generell */
+@media (max-width: 480px) {
+  button {
+    min-height: 48px;
+    min-width: 48px;
   }
 }
