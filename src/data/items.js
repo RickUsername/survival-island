@@ -55,7 +55,7 @@ const items = {
     name: 'Obst',
     category: 'food',
     isRaw: true,
-    hungerValue: 5, // roh: 2.5, gekocht: 5
+    hungerValue: 15, // roh: 7.5, gekocht: 15
     color: '#FF8C00',
     description: 'Frisches Obst vom Baum. Tiere lieben es!',
     spoilTime: 7 * 24 * 60 * 60 * 1000,
@@ -68,7 +68,7 @@ const items = {
     name: 'Beere',
     category: 'food',
     isRaw: true,
-    hungerValue: 3, // roh: 50% = 1.5, gekocht: 3
+    hungerValue: 9, // roh: 50% = 4.5, gekocht: 9
     color: '#DC143C',
     description: 'Rote Beeren. Essbar, aber besser gekocht.',
     spoilTime: 7 * 24 * 60 * 60 * 1000,
@@ -79,7 +79,7 @@ const items = {
     name: 'Pilz',
     category: 'food',
     isRaw: true,
-    hungerValue: 4, // roh: 2, gekocht: 4
+    hungerValue: 12, // roh: 6, gekocht: 12
     color: '#DEB887',
     description: 'Ein essbarer Pilz.',
     spoilTime: 7 * 24 * 60 * 60 * 1000,
@@ -89,8 +89,8 @@ const items = {
     name: 'Kokosnuss',
     category: 'food',
     isRaw: true,
-    hungerValue: 6, // roh: 3, gekocht: 6
-    thirstValue: 3,
+    hungerValue: 18, // roh: 9, gekocht: 18
+    thirstValue: 9,
     color: '#8B4513',
     description: 'Kokosnuss - stillt Hunger und etwas Durst.',
     spoilTime: 7 * 24 * 60 * 60 * 1000,
@@ -100,7 +100,7 @@ const items = {
     name: 'Fisch',
     category: 'food',
     isRaw: true,
-    hungerValue: 10, // roh: 5, gekocht: 10
+    hungerValue: 30, // roh: 15, gekocht: 30
     color: '#4682B4',
     description: 'Ein frischer Fisch aus dem See.',
     spoilTime: 7 * 24 * 60 * 60 * 1000,
@@ -110,8 +110,8 @@ const items = {
     name: 'Seetang',
     category: 'food',
     isRaw: true,
-    hungerValue: 2, // roh: 1, gekocht: n/a
-    thirstValue: 1,
+    hungerValue: 6, // roh: 3, gekocht: n/a
+    thirstValue: 3,
     color: '#2E8B57',
     description: 'Salziger Seetang.',
     spoilTime: 7 * 24 * 60 * 60 * 1000,
@@ -123,7 +123,7 @@ const items = {
     name: 'Gekochte Beeren',
     category: 'food',
     isRaw: false,
-    hungerValue: 3,
+    hungerValue: 9,
     color: '#B22222',
     description: 'Warm und lecker. Doppelt so nahrhaft wie roh.',
     spoilTime: 7 * 24 * 60 * 60 * 1000,
@@ -133,7 +133,7 @@ const items = {
     name: 'Gebratener Fisch',
     category: 'food',
     isRaw: false,
-    hungerValue: 10,
+    hungerValue: 30,
     color: '#DAA520',
     description: 'Ein gebratener Fisch. Sehr sättigend.',
     spoilTime: 7 * 24 * 60 * 60 * 1000,
@@ -143,7 +143,7 @@ const items = {
     name: 'Gebratene Pilze',
     category: 'food',
     isRaw: false,
-    hungerValue: 4,
+    hungerValue: 12,
     color: '#D2691E',
     description: 'Gebratene Pilze mit herrlichem Aroma.',
     spoilTime: 7 * 24 * 60 * 60 * 1000,
@@ -153,8 +153,8 @@ const items = {
     name: 'Obstsalat',
     category: 'food',
     isRaw: false,
-    hungerValue: 7,
-    thirstValue: 2,
+    hungerValue: 21,
+    thirstValue: 6,
     color: '#FF6347',
     description: 'Erfrischend und nahrhaft.',
     spoilTime: 7 * 24 * 60 * 60 * 1000,
@@ -172,7 +172,7 @@ const items = {
     id: 'fresh_water',
     name: 'Frischwasser',
     category: 'water',
-    thirstValue: 15,
+    thirstValue: 45,
     color: '#87CEEB',
     description: 'Sauberes Trinkwasser.',
   },

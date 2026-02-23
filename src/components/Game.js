@@ -1190,11 +1190,11 @@ export default function Game() {
     setTimeout(() => manualSave(), 0);
   }, [catInfo, setGameState, manualSave, mp]);
 
-  // Sammelreise starten
-  const handleStartGathering = useCallback((direction, topicId = null, targetDuration = null) => {
+  // Sammelreise starten (Stoppuhr-Modus – kein Zeitlimit)
+  const handleStartGathering = useCallback((direction, topicId = null) => {
     setGameState(prev => ({
       ...prev,
-      gathering: startGathering(direction, topicId, targetDuration),
+      gathering: startGathering(direction, topicId),
       diary: {
         ...prev.diary,
         activeTopicId: topicId,
@@ -1625,7 +1625,6 @@ export default function Game() {
           onPause={handlePauseGathering}
           onResume={handleResumeGathering}
           onCancel={handleFinishGathering}
-          onAutoReturn={handleFinishGathering}
         />
       )}
 
@@ -1786,7 +1785,7 @@ export default function Game() {
         <BiomePrompt
           direction={biomePrompt}
           diary={gameState.diary}
-          onConfirm={(topicId, targetDuration) => handleStartGathering(biomePrompt, topicId, targetDuration)}
+          onConfirm={(topicId) => handleStartGathering(biomePrompt, topicId)}
           onCancel={() => setBiomePrompt(null)}
         />
       )}
