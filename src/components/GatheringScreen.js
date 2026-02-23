@@ -1,16 +1,35 @@
 // ============================================
-// Sammelreisen-Bildschirm
+// Sammelreisen-Bildschirm (Stoppuhr-Modus)
 // ============================================
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
   getElapsedGatheringTime,
   formatGatheringTime,
-  isGatheringComplete,
-  getTargetDuration,
 } from '../systems/GatheringSystem';
 import { BIOMES } from '../utils/constants';
 import NeedsBar from './NeedsBar';
+
+// Benachrichtigungs-Berechtigung anfordern
+function requestNotificationPermission() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+
+// System-Benachrichtigung senden (funktioniert auch im Hintergrund)
+function sendNotification(title, body) {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try {
+      new Notification(title, {
+        body,
+        icon: '/icon-192.png',
+        tag: 'survival-island-alert',
+        requireInteraction: true,
+      });
+    } catch (e) { /* ignore */ }
+  }
+}
 
 // Wecker-Sound via Web Audio API (3 aufsteigende Töne)
 function playAlarmSound() {
@@ -33,7 +52,6 @@ function playAlarmSound() {
       osc.stop(now + i * 0.3 + 0.3);
     });
 
-    // Zweite Welle (Wiederholung nach 1s)
     setTimeout(() => {
       try {
         const ctx2 = new (window.AudioContext || window.webkitAudioContext)();
@@ -58,6 +76,9 @@ function playAlarmSound() {
   }
 }
 
+const CRITICAL_THRESHOLD = 15; // Benachrichtigung bei < 15%
+const TWO_HOURS_MS = 2 * 60 * 60 * 1000; // 2-Stunden-Alarm
+
 export default function GatheringScreen({
   gathering,
   needs,
@@ -65,43 +86,77 @@ export default function GatheringScreen({
   onPause,
   onResume,
   onCancel,
-  onAutoReturn,
 }) {
   const [elapsed, setElapsed] = useState(0);
-  const alarmPlayedRef = useRef(false);
+  const notifiedRef = useRef({ hunger: false, thirst: false, death: false, twoHours: false });
 
-  // Timer aktualisieren
+  // Benachrichtigungs-Berechtigung bei Reisestart anfordern
   useEffect(() => {
-    alarmPlayedRef.current = false; // Reset bei neuer Reise
+    requestNotificationPermission();
+    notifiedRef.current = { hunger: false, thirst: false, death: false, twoHours: false };
   }, [gathering?.startTime]);
 
+  // Timer aktualisieren (Stoppuhr – zählt hoch)
   useEffect(() => {
     const interval = setInterval(() => {
       if (gathering) {
         const time = getElapsedGatheringTime(gathering);
         setElapsed(time);
 
-        // Auto-Rückkehr bei Zielzeit
-        if (isGatheringComplete(gathering)) {
-          if (!alarmPlayedRef.current) {
-            alarmPlayedRef.current = true;
-            playAlarmSound();
-          }
-          onAutoReturn();
+        // 2-Stunden-Alarm (Erinnerung)
+        if (time >= TWO_HOURS_MS && !notifiedRef.current.twoHours) {
+          notifiedRef.current.twoHours = true;
+          playAlarmSound();
+          sendNotification(
+            'Sammelreise: 2 Stunden erreicht!',
+            'Deine Reise läuft seit 2 Stunden. Zeit zurückzukehren?'
+          );
         }
       }
     }, 100);
 
     return () => clearInterval(interval);
-  }, [gathering, onAutoReturn]);
+  }, [gathering]);
+
+  // Kritische Bedürfnisse überwachen → Benachrichtigung senden
+  useEffect(() => {
+    if (!needs || !gathering) return;
+
+    const isBackground = document.hidden;
+
+    if (needs.hunger <= 0 || needs.thirst <= 0) {
+      if (!notifiedRef.current.death) {
+        notifiedRef.current.death = true;
+        sendNotification(
+          'Dein Charakter stirbt!',
+          'Ein Bedürfnis ist auf 0% gefallen. Kehre sofort zurück!'
+        );
+        if (!isBackground) playAlarmSound();
+      }
+    } else {
+      if (needs.hunger < CRITICAL_THRESHOLD && !notifiedRef.current.hunger) {
+        notifiedRef.current.hunger = true;
+        sendNotification(
+          'Hunger kritisch!',
+          `Hunger bei ${Math.round(needs.hunger)}% – kehre bald zurück!`
+        );
+        if (!isBackground) playAlarmSound();
+      }
+      if (needs.thirst < CRITICAL_THRESHOLD && !notifiedRef.current.thirst) {
+        notifiedRef.current.thirst = true;
+        sendNotification(
+          'Durst kritisch!',
+          `Durst bei ${Math.round(needs.thirst)}% – kehre bald zurück!`
+        );
+        if (!isBackground) playAlarmSound();
+      }
+    }
+  }, [needs, gathering]);
 
   if (!gathering) return null;
 
   const biome = Object.values(BIOMES).find(b => b.direction === gathering.biome);
   const isPaused = gathering.status === 'paused';
-  const targetDuration = getTargetDuration(gathering);
-  const progress = (elapsed / targetDuration) * 100;
-  const remaining = Math.max(0, targetDuration - elapsed);
 
   return (
     <div style={styles.container}>
@@ -127,27 +182,11 @@ export default function GatheringScreen({
         </div>
       )}
 
-      {/* Timer */}
+      {/* Stoppuhr */}
       <div style={styles.timerContainer}>
         <div style={styles.timer}>
           {formatGatheringTime(elapsed)}
         </div>
-        <div style={styles.maxTime}>
-          / {formatGatheringTime(targetDuration)}
-        </div>
-      </div>
-
-      {/* Countdown */}
-      <div style={styles.countdown}>
-        Noch {formatGatheringTime(remaining)}
-      </div>
-
-      {/* Fortschrittsbalken */}
-      <div style={styles.progressContainer}>
-        <div style={{
-          ...styles.progressFill,
-          width: `${Math.min(100, progress)}%`,
-        }} />
       </div>
 
       {/* Status */}
@@ -176,7 +215,7 @@ export default function GatheringScreen({
           </button>
         )}
         <button style={styles.cancelBtn} onClick={onCancel}>
-          ← Abbrechen & Zurückkehren
+          ⏹ Stopp & Zurückkehren
         </button>
       </div>
 
@@ -268,32 +307,6 @@ const styles = {
     fontWeight: 'bold',
     color: '#fff',
     fontFamily: 'monospace',
-  },
-  maxTime: {
-    fontSize: 'min(20px, 4vw)',
-    color: '#666',
-    fontFamily: 'monospace',
-  },
-  countdown: {
-    fontSize: '16px',
-    color: '#f59e0b',
-    fontFamily: 'monospace',
-    zIndex: 1,
-  },
-  progressContainer: {
-    width: '80%',
-    maxWidth: '400px',
-    height: '8px',
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: '4px',
-    overflow: 'hidden',
-    zIndex: 1,
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#3498db',
-    borderRadius: '4px',
-    transition: 'width 0.5s linear',
   },
   status: {
     zIndex: 1,

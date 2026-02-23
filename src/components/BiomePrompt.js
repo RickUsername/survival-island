@@ -3,7 +3,7 @@
 // ============================================
 
 import React, { useState } from 'react';
-import { BIOMES, GATHERING_DURATION_OPTIONS } from '../utils/constants';
+import { BIOMES } from '../utils/constants';
 
 const biomeColors = {
   north: '#2d7a1e',
@@ -22,9 +22,6 @@ const biomeDescriptions = {
 export default function BiomePrompt({ direction, diary, onConfirm, onCancel }) {
   const biome = Object.values(BIOMES).find(b => b.direction === direction);
   const [selectedTopicId, setSelectedTopicId] = useState(null);
-  const [selectedDuration, setSelectedDuration] = useState(
-    GATHERING_DURATION_OPTIONS[GATHERING_DURATION_OPTIONS.length - 1].value // Default: 2 Std
-  );
 
   if (!biome) return null;
 
@@ -66,34 +63,15 @@ export default function BiomePrompt({ direction, diary, onConfirm, onCancel }) {
           )}
         </div>
 
-        {/* Reisedauer auswählen */}
-        <div style={styles.section}>
-          <label style={styles.sectionLabel}>Reisedauer</label>
-          <div style={styles.durationGrid}>
-            {GATHERING_DURATION_OPTIONS.map(opt => (
-              <button
-                key={opt.value}
-                style={{
-                  ...styles.durationBtn,
-                  ...(selectedDuration === opt.value ? styles.durationBtnActive : {}),
-                }}
-                onClick={() => setSelectedDuration(opt.value)}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
         <div style={styles.info}>
-          <p>Wecker klingelt nach Ablauf der Zeit.</p>
-          <p>Bedürfnisse laufen weiter!</p>
+          <p>Stoppuhr-Modus: Du entscheidest, wann du zurückkehrst.</p>
+          <p>Bedürfnisse laufen weiter – pass auf!</p>
         </div>
 
         <div style={styles.buttons}>
           <button
             style={styles.confirmBtn}
-            onClick={() => onConfirm(selectedTopicId, selectedDuration)}
+            onClick={() => onConfirm(selectedTopicId)}
           >
             Losziehen!
           </button>
@@ -178,27 +156,6 @@ const styles = {
     fontSize: '14px',
     outline: 'none',
     cursor: 'pointer',
-  },
-  durationGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(4, 1fr)',
-    gap: '6px',
-  },
-  durationBtn: {
-    padding: '8px 4px',
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    color: '#ccc',
-    border: '2px solid transparent',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    fontSize: '13px',
-    fontWeight: 'bold',
-    transition: 'all 0.15s',
-  },
-  durationBtnActive: {
-    backgroundColor: 'rgba(39, 174, 96, 0.3)',
-    borderColor: '#27ae60',
-    color: '#fff',
   },
   info: {
     backgroundColor: 'rgba(255,255,255,0.05)',
