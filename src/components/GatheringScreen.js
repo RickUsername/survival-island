@@ -1,10 +1,13 @@
 // ============================================
-// Sammelreisen-Bildschirm (Stoppuhr-Modus)
+// Sammelreisen-Bildschirm (Timer + Stoppuhr-Modus)
 // ============================================
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
   getElapsedGatheringTime,
+  getRemainingGatheringTime,
+  isStopwatchMode,
+  isGatheringComplete,
   formatGatheringTime,
 } from '../systems/GatheringSystem';
 import { BIOMES } from '../utils/constants';
@@ -77,7 +80,7 @@ function playAlarmSound() {
 }
 
 const CRITICAL_THRESHOLD = 15; // Benachrichtigung bei < 15%
-const TWO_HOURS_MS = 2 * 60 * 60 * 1000; // 2-Stunden-Alarm
+const TWO_HOURS_MS = 2 * 60 * 60 * 1000; // 2-Stunden-Alarm (nur Stoppuhr-Modus)
 
 export default function GatheringScreen({
   gathering,
@@ -88,23 +91,39 @@ export default function GatheringScreen({
   onCancel,
 }) {
   const [elapsed, setElapsed] = useState(0);
-  const notifiedRef = useRef({ hunger: false, thirst: false, death: false, twoHours: false });
+  const [remaining, setRemaining] = useState(null);
+  const notifiedRef = useRef({ hunger: false, thirst: false, death: false, twoHours: false, timerDone: false });
+
+  const stopwatch = gathering ? isStopwatchMode(gathering) : false;
 
   // Benachrichtigungs-Berechtigung bei Reisestart anfordern
   useEffect(() => {
     requestNotificationPermission();
-    notifiedRef.current = { hunger: false, thirst: false, death: false, twoHours: false };
+    notifiedRef.current = { hunger: false, thirst: false, death: false, twoHours: false, timerDone: false };
   }, [gathering?.startTime]);
 
-  // Timer aktualisieren (Stoppuhr – zählt hoch)
+  // Timer aktualisieren
   useEffect(() => {
     const interval = setInterval(() => {
       if (gathering) {
         const time = getElapsedGatheringTime(gathering);
         setElapsed(time);
 
-        // 2-Stunden-Alarm (Erinnerung)
-        if (time >= TWO_HOURS_MS && !notifiedRef.current.twoHours) {
+        const rem = getRemainingGatheringTime(gathering);
+        setRemaining(rem);
+
+        // Timer-Modus: Alarm wenn Zeit abgelaufen
+        if (!stopwatch && rem !== null && rem <= 0 && !notifiedRef.current.timerDone) {
+          notifiedRef.current.timerDone = true;
+          playAlarmSound();
+          sendNotification(
+            'Sammelreise abgeschlossen!',
+            'Deine Reisezeit ist abgelaufen. Kehre zurück und sammle deinen Loot ein!'
+          );
+        }
+
+        // Stoppuhr-Modus: 2-Stunden-Erinnerung
+        if (stopwatch && time >= TWO_HOURS_MS && !notifiedRef.current.twoHours) {
           notifiedRef.current.twoHours = true;
           playAlarmSound();
           sendNotification(
@@ -116,7 +135,7 @@ export default function GatheringScreen({
     }, 100);
 
     return () => clearInterval(interval);
-  }, [gathering]);
+  }, [gathering, stopwatch]);
 
   // Kritische Bedürfnisse überwachen → Benachrichtigung senden
   useEffect(() => {
@@ -157,6 +176,11 @@ export default function GatheringScreen({
 
   const biome = Object.values(BIOMES).find(b => b.direction === gathering.biome);
   const isPaused = gathering.status === 'paused';
+  const isComplete = !stopwatch && isGatheringComplete(gathering);
+
+  // Fortschrittsbalken (nur Timer-Modus)
+  const targetDuration = gathering.targetDuration;
+  const progress = (!stopwatch && targetDuration) ? Math.min(1, elapsed / targetDuration) : null;
 
   return (
     <div style={styles.container}>
@@ -174,6 +198,17 @@ export default function GatheringScreen({
         <span style={styles.biomeName}>{biome?.name || gathering.biome}</span>
       </div>
 
+      {/* Modus-Badge */}
+      <div style={{
+        ...styles.modeBadge,
+        backgroundColor: stopwatch ? 'rgba(245, 158, 11, 0.2)' : 'rgba(39, 174, 96, 0.2)',
+        borderColor: stopwatch ? '#f59e0b' : '#27ae60',
+      }}>
+        <span style={{ color: stopwatch ? '#f59e0b' : '#27ae60', fontSize: '13px', fontWeight: 'bold' }}>
+          {stopwatch ? 'Stoppuhr-Modus' : 'Timer-Modus'}
+        </span>
+      </div>
+
       {/* Aktives Lernthema Badge */}
       {activeTopicName && (
         <div style={styles.topicBadge}>
@@ -182,16 +217,47 @@ export default function GatheringScreen({
         </div>
       )}
 
-      {/* Stoppuhr */}
+      {/* Timer / Stoppuhr */}
       <div style={styles.timerContainer}>
-        <div style={styles.timer}>
-          {formatGatheringTime(elapsed)}
-        </div>
+        {stopwatch ? (
+          // Stoppuhr: zählt hoch
+          <div style={styles.timer}>
+            {formatGatheringTime(elapsed)}
+          </div>
+        ) : (
+          // Timer: zeigt verbleibende Zeit (Countdown)
+          <div style={{
+            ...styles.timer,
+            color: isComplete ? '#4ade80' : remaining != null && remaining < 5 * 60 * 1000 ? '#ef4444' : '#fff',
+          }}>
+            {isComplete ? '00:00:00' : formatGatheringTime(remaining ?? 0)}
+          </div>
+        )}
       </div>
+
+      {/* Fortschrittsbalken (nur Timer-Modus) */}
+      {progress !== null && (
+        <div style={styles.progressBar}>
+          <div style={{
+            ...styles.progressFill,
+            width: `${progress * 100}%`,
+            backgroundColor: isComplete ? '#4ade80' : '#27ae60',
+          }} />
+        </div>
+      )}
+
+      {/* Verstrichene Zeit (Timer-Modus) */}
+      {!stopwatch && (
+        <div style={styles.elapsedLabel}>
+          {formatGatheringTime(elapsed)} gesammelt
+        </div>
+      )}
 
       {/* Status */}
       <div style={styles.status}>
-        {isPaused ? (
+        {isComplete ? (
+          <span style={styles.completeText}>Reise abgeschlossen!</span>
+        ) : isPaused ? (
           <span style={styles.pausedText}>⏸ PAUSIERT</span>
         ) : (
           <span style={styles.activeText}>● Sammelt...</span>
@@ -205,23 +271,27 @@ export default function GatheringScreen({
 
       {/* Buttons */}
       <div style={styles.buttons}>
-        {isPaused ? (
-          <button style={styles.resumeBtn} onClick={onResume}>
-            ▶ Weiterlaufen
-          </button>
-        ) : (
-          <button style={styles.pauseBtn} onClick={onPause}>
-            ⏸ Pause
-          </button>
+        {!isComplete && (
+          isPaused ? (
+            <button style={styles.resumeBtn} onClick={onResume}>
+              ▶ Weiterlaufen
+            </button>
+          ) : (
+            <button style={styles.pauseBtn} onClick={onPause}>
+              ⏸ Pause
+            </button>
+          )
         )}
         <button style={styles.cancelBtn} onClick={onCancel}>
-          ⏹ Stopp & Zurückkehren
+          {isComplete ? '🎒 Loot einsammeln' : '⏹ Stopp & Zurückkehren'}
         </button>
       </div>
 
       {/* Hinweis */}
       <p style={styles.hint}>
-        {isPaused
+        {isComplete
+          ? 'Deine Reise ist abgeschlossen! Kehre zurück, um deinen Loot einzusammeln.'
+          : isPaused
           ? 'Während der Pause werden keine Items gesammelt und Bedürfnisse pausieren.'
           : 'Je länger die Reise, desto mehr Items. Aber pass auf deine Bedürfnisse auf!'}
       </p>
@@ -241,7 +311,7 @@ const styles = {
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 'min(16px, 2vh)',
+    gap: 'min(12px, 1.5vh)',
     zIndex: 50,
     padding: '12px',
     overflow: 'auto',
@@ -278,6 +348,12 @@ const styles = {
     fontSize: 'min(28px, 5vw)',
     fontWeight: 'bold',
   },
+  modeBadge: {
+    borderRadius: '20px',
+    padding: '4px 14px',
+    border: '1px solid',
+    zIndex: 1,
+  },
   topicBadge: {
     display: 'flex',
     alignItems: 'center',
@@ -308,6 +384,24 @@ const styles = {
     color: '#fff',
     fontFamily: 'monospace',
   },
+  progressBar: {
+    width: 'min(300px, 80vw)',
+    height: '6px',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: '3px',
+    overflow: 'hidden',
+    zIndex: 1,
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: '3px',
+    transition: 'width 0.3s ease',
+  },
+  elapsedLabel: {
+    color: '#888',
+    fontSize: '13px',
+    zIndex: 1,
+  },
   status: {
     zIndex: 1,
   },
@@ -319,6 +413,11 @@ const styles = {
   activeText: {
     color: '#4ade80',
     fontSize: '18px',
+  },
+  completeText: {
+    color: '#4ade80',
+    fontSize: '20px',
+    fontWeight: 'bold',
   },
   needsContainer: {
     zIndex: 1,

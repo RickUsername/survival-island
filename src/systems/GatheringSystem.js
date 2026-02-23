@@ -1,7 +1,8 @@
 // ============================================
-// Sammelreisen-System (Stoppuhr-Modus)
+// Sammelreisen-System (Timer + Stoppuhr-Modus)
 // ============================================
 
+import { MAX_GATHERING_DURATION } from '../utils/constants';
 import { calculateLoot } from '../data/lootTables';
 import { calculateMoodFromGathering } from './NeedsSystem';
 import { getActiveToolTypes } from './ToolSystem';
@@ -14,8 +15,9 @@ const BIOME_TOOL_MAP = {
   east:  ['pickaxe'],
 };
 
-// Neue Sammelreise starten (kein Zeitlimit – Stoppuhr-Modus)
-export function startGathering(biome, topicId = null) {
+// Neue Sammelreise starten
+// targetDuration: ms für Timer-Modus, null für Stoppuhr-Modus (endlos)
+export function startGathering(biome, topicId = null, targetDuration = undefined) {
   return {
     biome,
     startTime: Date.now(),
@@ -23,20 +25,48 @@ export function startGathering(biome, topicId = null) {
     totalPausedMs: 0,       // Gesamte Pausenzeit
     status: 'active',       // active | paused | returning
     topicId,                // Aktives Lernthema (null = keins)
+    targetDuration: targetDuration === undefined ? MAX_GATHERING_DURATION : targetDuration,
   };
 }
 
-// Verstrichene aktive Sammelzeit berechnen (kein Cap mehr)
+// Zieldauer einer Sammelreise ermitteln (null = Stoppuhr/endlos)
+export function getTargetDuration(gathering) {
+  return gathering?.targetDuration;
+}
+
+// Ist dies eine Stoppuhr-Reise (kein Zeitlimit)?
+export function isStopwatchMode(gathering) {
+  return gathering?.targetDuration === null || gathering?.targetDuration === undefined;
+}
+
+// Verstrichene aktive Sammelzeit berechnen
 export function getElapsedGatheringTime(gathering) {
   if (!gathering) return 0;
 
+  const maxDuration = getTargetDuration(gathering);
+  let elapsed;
+
   if (gathering.pausedAt) {
     // Während Pause: Zeit bis Pausenbeginn
-    return gathering.pausedAt - gathering.startTime - gathering.totalPausedMs;
+    elapsed = gathering.pausedAt - gathering.startTime - gathering.totalPausedMs;
   } else {
     // Während Aktivität: Zeit bis jetzt
-    return Date.now() - gathering.startTime - gathering.totalPausedMs;
+    elapsed = Date.now() - gathering.startTime - gathering.totalPausedMs;
   }
+
+  // Im Stoppuhr-Modus kein Cap, im Timer-Modus auf Zieldauer begrenzen
+  if (maxDuration != null) {
+    return Math.min(elapsed, maxDuration);
+  }
+  return elapsed;
+}
+
+// Verbleibende Zeit berechnen (nur für Timer-Modus)
+export function getRemainingGatheringTime(gathering) {
+  if (!gathering || isStopwatchMode(gathering)) return null;
+  const target = getTargetDuration(gathering);
+  const elapsed = getElapsedGatheringTime(gathering);
+  return Math.max(0, target - elapsed);
 }
 
 // Sammelreise pausieren
@@ -86,6 +116,15 @@ export function finishGathering(gathering, tools = []) {
     topicId: gathering.topicId,
     usedToolTypes, // Für Haltbarkeits-Abzug
   };
+}
+
+// Prüfen ob Sammelzeit erreicht (nur für Timer-Modus)
+export function isGatheringComplete(gathering) {
+  if (!gathering) return false;
+  // Stoppuhr-Modus endet nie automatisch
+  if (isStopwatchMode(gathering)) return false;
+  const maxDuration = getTargetDuration(gathering);
+  return getElapsedGatheringTime(gathering) >= maxDuration;
 }
 
 // Zeit formatieren (ms → hh:mm:ss)

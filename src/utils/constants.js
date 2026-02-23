@@ -44,7 +44,20 @@ export const SHELTER_MOOD_MODIFIERS = [
 ];
 
 // --- Sammelreisen ---
-// Kein Zeitlimit mehr – Stoppuhr-Modus (Spieler entscheidet wann Schluss ist)
+export const MAX_GATHERING_DURATION = 2 * 60 * 60 * 1000; // 2 Stunden max
+
+// Einstellbare Reisedauer-Optionen (15-Minuten-Schritte + Stoppuhr)
+export const GATHERING_DURATION_OPTIONS = [
+  { label: '15 Min', value: 15 * 60 * 1000 },
+  { label: '30 Min', value: 30 * 60 * 1000 },
+  { label: '45 Min', value: 45 * 60 * 1000 },
+  { label: '1 Std',  value: 60 * 60 * 1000 },
+  { label: '1:15',   value: 75 * 60 * 1000 },
+  { label: '1:30',   value: 90 * 60 * 1000 },
+  { label: '1:45',   value: 105 * 60 * 1000 },
+  { label: '2 Std',  value: 120 * 60 * 1000 },
+  { label: 'Endlos', value: null },  // Stoppuhr-Modus (kein Zeitlimit)
+];
 
 // Biome je Himmelsrichtung
 export const BIOMES = {

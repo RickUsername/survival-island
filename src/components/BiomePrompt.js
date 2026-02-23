@@ -3,7 +3,7 @@
 // ============================================
 
 import React, { useState } from 'react';
-import { BIOMES } from '../utils/constants';
+import { BIOMES, GATHERING_DURATION_OPTIONS } from '../utils/constants';
 
 const biomeColors = {
   north: '#2d7a1e',
@@ -22,10 +22,14 @@ const biomeDescriptions = {
 export default function BiomePrompt({ direction, diary, onConfirm, onCancel }) {
   const biome = Object.values(BIOMES).find(b => b.direction === direction);
   const [selectedTopicId, setSelectedTopicId] = useState(null);
+  const [selectedDuration, setSelectedDuration] = useState(
+    GATHERING_DURATION_OPTIONS[GATHERING_DURATION_OPTIONS.length - 2].value // Default: 2 Std (vorletzter Eintrag)
+  );
 
   if (!biome) return null;
 
   const topics = diary?.topics || [];
+  const isStopwatch = selectedDuration === null;
 
   return (
     <div style={styles.overlay}>
@@ -63,15 +67,45 @@ export default function BiomePrompt({ direction, diary, onConfirm, onCancel }) {
           )}
         </div>
 
+        {/* Reisedauer auswählen */}
+        <div style={styles.section}>
+          <label style={styles.sectionLabel}>Reisedauer</label>
+          <div style={styles.durationGrid}>
+            {GATHERING_DURATION_OPTIONS.map(opt => (
+              <button
+                key={opt.label}
+                style={{
+                  ...styles.durationBtn,
+                  ...(selectedDuration === opt.value ? styles.durationBtnActive : {}),
+                  ...(opt.value === null ? styles.durationBtnStopwatch : {}),
+                  ...(selectedDuration === opt.value && opt.value === null ? styles.durationBtnStopwatchActive : {}),
+                }}
+                onClick={() => setSelectedDuration(opt.value)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div style={styles.info}>
-          <p>Stoppuhr-Modus: Du entscheidest, wann du zurückkehrst.</p>
-          <p>Bedürfnisse laufen weiter – pass auf!</p>
+          {isStopwatch ? (
+            <>
+              <p>Stoppuhr-Modus: Du entscheidest, wann du zurückkehrst.</p>
+              <p>Bedürfnisse laufen weiter – pass auf!</p>
+            </>
+          ) : (
+            <>
+              <p>Wecker klingelt nach Ablauf der Zeit.</p>
+              <p>Bedürfnisse laufen weiter!</p>
+            </>
+          )}
         </div>
 
         <div style={styles.buttons}>
           <button
             style={styles.confirmBtn}
-            onClick={() => onConfirm(selectedTopicId)}
+            onClick={() => onConfirm(selectedTopicId, selectedDuration)}
           >
             Losziehen!
           </button>
@@ -156,6 +190,37 @@ const styles = {
     fontSize: '14px',
     outline: 'none',
     cursor: 'pointer',
+  },
+  durationGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, 1fr)',
+    gap: '6px',
+  },
+  durationBtn: {
+    padding: '8px 4px',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    color: '#ccc',
+    border: '2px solid transparent',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: 'bold',
+    transition: 'all 0.15s',
+  },
+  durationBtnActive: {
+    backgroundColor: 'rgba(39, 174, 96, 0.3)',
+    borderColor: '#27ae60',
+    color: '#fff',
+  },
+  durationBtnStopwatch: {
+    gridColumn: '1 / -1',
+    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+    color: '#f59e0b',
+  },
+  durationBtnStopwatchActive: {
+    backgroundColor: 'rgba(245, 158, 11, 0.3)',
+    borderColor: '#f59e0b',
+    color: '#fff',
   },
   info: {
     backgroundColor: 'rgba(255,255,255,0.05)',
