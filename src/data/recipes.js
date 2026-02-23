@@ -89,7 +89,7 @@ const recipes = [
       { itemId: 'vine', amount: 2 },
     ],
     requiresTool: null,
-    description: 'Eine primitive Holzaxt. Hält 60 Min.',
+    description: 'Eine primitive Holzaxt. Hält 300 Min.',
   },
   {
     id: 'wood_fishing_rod',
@@ -101,7 +101,7 @@ const recipes = [
       { itemId: 'vine', amount: 3 },
     ],
     requiresTool: null,
-    description: 'Eine einfache Angel aus Ästen. Hält 60 Min.',
+    description: 'Eine einfache Angel aus Ästen. Hält 300 Min.',
   },
   {
     id: 'wood_pickaxe',
@@ -113,10 +113,10 @@ const recipes = [
       { itemId: 'vine', amount: 2 },
     ],
     requiresTool: null,
-    description: 'Eine schwache Spitzhacke. Hält 60 Min.',
+    description: 'Eine schwache Spitzhacke. Hält 300 Min.',
   },
 
-  // --- Werkzeuge: Stein-Stufe (benötigt Holzwerkzeug) ---
+  // --- Werkzeuge: Stein-Stufe ---
   {
     id: 'stone_axe',
     name: 'Steinaxt',
@@ -127,8 +127,8 @@ const recipes = [
       { itemId: 'stone', amount: 2 },
       { itemId: 'vine', amount: 1 },
     ],
-    requiresToolType: 'axe',
-    description: 'Eine solide Steinaxt. Hält 240 Min.',
+    requiresTool: null,
+    description: 'Eine solide Steinaxt. Hält 1200 Min.',
   },
   {
     id: 'stone_fishing_rod',
@@ -140,8 +140,8 @@ const recipes = [
       { itemId: 'stone', amount: 2 },
       { itemId: 'vine', amount: 3 },
     ],
-    requiresToolType: 'fishing_rod',
-    description: 'Eine stabile Angel mit Steinhaken. Hält 240 Min.',
+    requiresTool: null,
+    description: 'Eine stabile Angel mit Steinhaken. Hält 1200 Min.',
   },
   {
     id: 'stone_pickaxe',
@@ -153,11 +153,11 @@ const recipes = [
       { itemId: 'stone', amount: 5 },
       { itemId: 'vine', amount: 2 },
     ],
-    requiresToolType: 'pickaxe',
-    description: 'Eine Spitzhacke für härtere Gesteine. Hält 240 Min.',
+    requiresTool: null,
+    description: 'Eine Spitzhacke für härtere Gesteine. Hält 1200 Min.',
   },
 
-  // --- Werkzeuge: Kristall-Stufe (benötigt Steinwerkzeug) ---
+  // --- Werkzeuge: Kristall-Stufe ---
   {
     id: 'crystal_axe',
     name: 'Kristallaxt',
@@ -168,9 +168,8 @@ const recipes = [
       { itemId: 'crystal', amount: 2 },
       { itemId: 'iron_ore', amount: 3 },
     ],
-    requiresToolType: 'axe',
-    requiresToolTier: 'stone',
-    description: 'Die beste Axt. Hält 480 Min.',
+    requiresTool: null,
+    description: 'Die beste Axt. Hält 2400 Min.',
   },
   {
     id: 'crystal_fishing_rod',
@@ -182,9 +181,8 @@ const recipes = [
       { itemId: 'crystal', amount: 2 },
       { itemId: 'vine', amount: 3 },
     ],
-    requiresToolType: 'fishing_rod',
-    requiresToolTier: 'stone',
-    description: 'Die beste Angel. Hält 480 Min.',
+    requiresTool: null,
+    description: 'Die beste Angel. Hält 2400 Min.',
   },
   {
     id: 'crystal_pickaxe',
@@ -196,9 +194,8 @@ const recipes = [
       { itemId: 'crystal', amount: 3 },
       { itemId: 'iron_ore', amount: 5 },
     ],
-    requiresToolType: 'pickaxe',
-    requiresToolTier: 'stone',
-    description: 'Die beste Spitzhacke. Hält 480 Min.',
+    requiresTool: null,
+    description: 'Die beste Spitzhacke. Hält 2400 Min.',
   },
 
   // --- Lagerfeuer ---

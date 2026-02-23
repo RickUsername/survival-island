@@ -377,6 +377,9 @@ export default function useGameLoop() {
 
     setGameState(state);
     lastFrameTime.current = Date.now();
+
+    // App ist geladen — SW-Reload erlauben
+    window.__appReady = true;
     }; // Ende initGame
 
     initGame();

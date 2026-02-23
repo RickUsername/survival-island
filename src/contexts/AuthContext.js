@@ -34,7 +34,9 @@ async function checkAdminStatus(userId) {
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
+  // Auf localhost immer Admin (für lokales Testen)
+  const isLocalhost = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  const [isAdmin, setIsAdmin] = useState(isLocalhost);
 
   useEffect(() => {
     if (!supabase) {

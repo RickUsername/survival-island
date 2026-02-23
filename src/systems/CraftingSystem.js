@@ -71,14 +71,20 @@ export function craft(recipe, gameState) {
     tools: gameState.tools.map(t => ({ ...t })), // Deep copy der Tool-Objekte
   };
 
-  // Zutaten abziehen
-  for (const ingredient of recipe.ingredients) {
-    const item = { ...newState.inventory[ingredient.itemId] };
-    item.amount -= ingredient.amount;
-    if (item.amount <= 0) {
-      delete newState.inventory[ingredient.itemId];
-    } else {
-      newState.inventory[ingredient.itemId] = item;
+  // Für Platzierungs-Items: Zutaten NICHT sofort abziehen,
+  // sondern als pendingIngredients mitsenden (werden erst bei Platzierung abgezogen)
+  const isPlacement = ['shelter', 'campfire', 'water_collector'].includes(recipe.result.type);
+
+  if (!isPlacement) {
+    // Zutaten sofort abziehen (Werkzeuge, Essen etc.)
+    for (const ingredient of recipe.ingredients) {
+      const item = { ...newState.inventory[ingredient.itemId] };
+      item.amount -= ingredient.amount;
+      if (item.amount <= 0) {
+        delete newState.inventory[ingredient.itemId];
+      } else {
+        newState.inventory[ingredient.itemId] = item;
+      }
     }
   }
 
@@ -87,14 +93,17 @@ export function craft(recipe, gameState) {
     case 'shelter':
       // Gebäude-Flags NICHT direkt setzen → Platzierungsmodus aktivieren
       newState._pendingPlacement = { type: 'shelter', level: recipe.result.level };
+      newState._pendingIngredients = recipe.ingredients;
       break;
 
     case 'campfire':
       newState._pendingPlacement = { type: 'campfire' };
+      newState._pendingIngredients = recipe.ingredients;
       break;
 
     case 'water_collector':
       newState._pendingPlacement = { type: 'water_collector' };
+      newState._pendingIngredients = recipe.ingredients;
       break;
 
     case 'tool': {

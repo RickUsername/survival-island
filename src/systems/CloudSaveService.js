@@ -27,16 +27,27 @@ export async function syncUp(userId, gameState) {
   }
 }
 
-// Download cloud game state from Supabase
+// Timeout-Wrapper für Promises
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms)),
+  ]);
+}
+
+// Download cloud game state from Supabase (mit 5s Timeout)
 export async function syncDown(userId) {
   if (!supabase || !userId) return { success: false, data: null };
 
   try {
-    const { data, error } = await supabase
-      .from('game_saves')
-      .select('game_state, last_update')
-      .eq('user_id', userId)
-      .single();
+    const { data, error } = await withTimeout(
+      supabase
+        .from('game_saves')
+        .select('game_state, last_update')
+        .eq('user_id', userId)
+        .single(),
+      5000
+    );
 
     if (error) {
       if (error.code === 'PGRST116') {
@@ -49,7 +60,7 @@ export async function syncDown(userId) {
 
     return { success: true, data: data.game_state, lastUpdate: data.last_update };
   } catch (err) {
-    console.warn('Cloud-Sync (Download) Netzwerkfehler:', err);
+    console.warn('Cloud-Sync (Download) fehlgeschlagen:', err.message);
     return { success: false, data: null, error: err };
   }
 }

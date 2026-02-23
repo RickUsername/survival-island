@@ -78,10 +78,12 @@ export default function Game() {
   const [toolbarExpanded, setToolbarExpanded] = useState(false);
   const [topBarExpanded, setTopBarExpanded] = useState(false);
 
-  // Platzierungsmodus: { type: 'shelter'|'campfire'|'water_collector', level?: number }
+  // Platzierungsmodus: { type: 'shelter'|'campfire'|'water_collector', level?: number, pendingIngredients?: [] }
   const [placementMode, setPlacementMode] = useState(null);
   // Ghost-Position für Vorschau: { type, col, row, level? }
   const [placementGhost, setPlacementGhost] = useState(null);
+  // Bestätigungs-Dialog für Platzierung: { col, row }
+  const [placementConfirm, setPlacementConfirm] = useState(null);
   // Abriss-Dialog: { type, col, row, index }
   const [demolishConfirm, setDemolishConfirm] = useState(null);
   // Tier-Info-Dialog: { id, type, hunger, ... }
@@ -419,7 +421,11 @@ export default function Game() {
 
       const key = e.key.toLowerCase();
 
-      // ESC beendet Platzierungsmodus
+      // ESC: Bestätigungs-Dialog schließen oder Platzierungsmodus beenden
+      if (key === 'escape' && placementConfirm) {
+        setPlacementConfirm(null);
+        return;
+      }
       if (key === 'escape' && placementMode) {
         handleCancelPlacement();
         return;
@@ -451,7 +457,7 @@ export default function Game() {
       window.removeEventListener('keyup', handleKeyUp);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [placementMode]);
+  }, [placementMode, placementConfirm]);
 
   // Bewegungs-Loop (WASD + Click-to-Walk) - läuft einmalig, liest Keys über Ref
   useEffect(() => {
@@ -545,60 +551,77 @@ export default function Game() {
   }, [setGameState, checkExitAfterMove]);
 
   // Prüfen ob eine Tile für Platzierung gültig ist
-  const isTileValidForPlacement = useCallback((col, row) => {
+  // allowSameType: Erlaubt Platzierung wenn gleiches Gebäude dort steht (Überbauen)
+  const isTileValidForPlacement = useCallback((col, row, buildingType = null) => {
     if (col < 0 || col >= MAP_COLS || row < 0 || row >= MAP_ROWS) return false;
     const tileType = homeMap[row]?.[col];
     if (tileType !== TILE_TYPES.GRASS) return false;
-    // Kein Gebäude auf der gleichen Tile
-    if (gameState?.placedBuildings?.some(b => b.col === col && b.row === row)) return false;
+    // Gebäude auf der Tile?
+    const existing = gameState?.placedBuildings?.find(b => b.col === col && b.row === row);
+    if (existing) {
+      // Gleiches Gebäude → Überbauen erlaubt
+      if (buildingType && existing.type === buildingType) return true;
+      return false;
+    }
     return true;
   }, [gameState]);
 
-  // Platzierung abbrechen → Materialien zurückgeben
+  // Platzierung komplett abbrechen — keine Ressourcen verloren (wurden nie abgezogen)
   const handleCancelPlacement = useCallback(() => {
-    // Materialien nicht zurückgeben - stattdessen den Craft rückgängig machen
-    // Einfachste Lösung: Einfach den Modus verlassen, Material ist weg
-    // Alternativ: Gebäude-Flags zurücksetzen falls nötig
     setPlacementMode(null);
     setPlacementGhost(null);
+    setPlacementConfirm(null);
   }, []);
 
-  // Maus-Bewegung im Platzierungsmodus
+  // Maus-Bewegung im Platzierungsmodus (nicht wenn Bestätigungs-Dialog offen)
   const handleMouseMove = useCallback((col, row) => {
-    if (!placementMode) return;
+    if (!placementMode || placementConfirm) return;
     setPlacementGhost({
       type: placementMode.type,
       col,
       row,
       level: placementMode.level,
     });
-  }, [placementMode]);
+  }, [placementMode, placementConfirm]);
 
-  // Gebäude platzieren (Klick im Platzierungsmodus)
+  // Gebäude platzieren (Klick im Platzierungsmodus) → zeigt Bestätigungs-Dialog
   const handlePlaceBuilding = useCallback((col, row) => {
     if (!placementMode) return;
+    if (!isTileValidForPlacement(col, row, placementMode.type)) return;
 
-    // Prüfen ob auf dieser Tile ein gleichartiges Gebäude steht (Upgrade/Ersetzung)
-    const existingOnTile = (gameState?.placedBuildings || []).find(
-      b => b.col === col && b.row === row && b.type === placementMode.type
-    );
+    // Bestätigungs-Dialog anzeigen
+    setPlacementConfirm({ col, row });
+  }, [placementMode, isTileValidForPlacement]);
 
-    // Wenn Tile belegt ist mit einem ANDEREN Gebäudetyp → ungültig
-    const otherOnTile = (gameState?.placedBuildings || []).find(
-      b => b.col === col && b.row === row && b.type !== placementMode.type
-    );
-    if (otherOnTile) return;
-
-    // Wenn kein bestehendes gleichartiges Gebäude → normale Tile-Prüfung
-    if (!existingOnTile && !isTileValidForPlacement(col, row)) return;
+  // Platzierung bestätigen
+  const confirmPlacement = useCallback(() => {
+    if (!placementMode || !placementConfirm) return;
+    const { col, row } = placementConfirm;
 
     setGameState(prev => {
+      // Zutaten abziehen
+      const newInventory = { ...prev.inventory };
+      if (placementMode.pendingIngredients) {
+        for (const ingredient of placementMode.pendingIngredients) {
+          const item = { ...newInventory[ingredient.itemId] };
+          item.amount -= ingredient.amount;
+          if (item.amount <= 0) {
+            delete newInventory[ingredient.itemId];
+          } else {
+            newInventory[ingredient.itemId] = item;
+          }
+        }
+      }
+
       let newPlaced = [...(prev.placedBuildings || [])];
       const newBuildings = { ...prev.buildings };
 
+      const existingOnTile = newPlaced.find(
+        b => b.col === col && b.row === row && b.type === placementMode.type
+      );
+
       switch (placementMode.type) {
         case 'shelter': {
-          // Wenn auf dieser Tile schon ein Shelter steht → ersetzen
           if (existingOnTile) {
             newPlaced = newPlaced.map(b =>
               (b.col === col && b.row === row && b.type === 'shelter')
@@ -606,10 +629,8 @@ export default function Game() {
                 : b
             );
           } else {
-            // Neues Shelter hinzufügen (alte an anderen Positionen bleiben)
             newPlaced.push({ type: 'shelter', col, row, level: placementMode.level });
           }
-          // shelterLevel = höchstes vorhandenes Level
           const maxLevel = Math.max(
             ...newPlaced.filter(b => b.type === 'shelter').map(b => b.level || 1)
           );
@@ -635,6 +656,7 @@ export default function Game() {
 
       return {
         ...prev,
+        inventory: newInventory,
         placedBuildings: newPlaced,
         buildings: newBuildings,
       };
@@ -642,8 +664,14 @@ export default function Game() {
 
     setPlacementMode(null);
     setPlacementGhost(null);
+    setPlacementConfirm(null);
     setTimeout(() => { manualSave(); checkAndApplyAchievements(); }, 0);
-  }, [placementMode, gameState, isTileValidForPlacement, setGameState, manualSave, checkAndApplyAchievements]);
+  }, [placementMode, placementConfirm, setGameState, manualSave, checkAndApplyAchievements]);
+
+  // Platzierung-Bestätigung abbrechen (zurück zum Platzierungsmodus)
+  const cancelPlacementConfirm = useCallback(() => {
+    setPlacementConfirm(null);
+  }, []);
 
   // Baum pflanzen (Klick im Pflanz-Modus)
   const handlePlantTree = useCallback((col, row) => {
@@ -1321,16 +1349,18 @@ export default function Game() {
     // Prüfen ob ein Gebäude-Placement ansteht
     if (newState._pendingPlacement) {
       const pending = newState._pendingPlacement;
+      const pendingIngredients = newState._pendingIngredients || [];
       delete newState._pendingPlacement;
+      delete newState._pendingIngredients;
 
-      // State setzen (Materialien wurden bereits abgezogen)
+      // State setzen (Materialien sind NOCH NICHT abgezogen — erst bei Platzierung)
       setGameState(newState);
 
-      // Platzierungsmodus aktivieren
-      setPlacementMode(pending);
+      // Platzierungsmodus aktivieren (mit gespeicherten Zutaten)
+      setPlacementMode({ ...pending, pendingIngredients });
       setShowCrafting(false); // Crafting-Panel schließen
 
-      setTimeout(() => { manualSave(); checkAndApplyAchievements(); }, 0);
+      setTimeout(() => { manualSave(); }, 0);
       return;
     }
 
@@ -1645,7 +1675,7 @@ export default function Game() {
           )}
 
           {/* Platzierungsmodus-Banner */}
-          {placementMode && (
+          {placementMode && !placementConfirm && (
             <div style={{ ...styles.placementBanner, top: safeArea.top + 60 }}>
               {placementMode.type === 'tree_seed'
                 ? 'Klicke auf eine freie Grasfläche, um den Samen zu pflanzen!'
@@ -1653,6 +1683,23 @@ export default function Game() {
               <button style={styles.placementCancelBtn} onClick={handleCancelPlacement}>
                 Abbrechen [ESC]
               </button>
+            </div>
+          )}
+
+          {/* Platzierungs-Bestätigung */}
+          {placementConfirm && (
+            <div style={styles.placementConfirmOverlay}>
+              <div style={styles.placementConfirmDialog}>
+                <div style={styles.placementConfirmTitle}>Hier bauen?</div>
+                <div style={styles.placementConfirmButtons}>
+                  <button style={styles.placementConfirmBtn} onClick={confirmPlacement}>
+                    Bauen
+                  </button>
+                  <button style={styles.placementCancelConfirmBtn} onClick={cancelPlacementConfirm}>
+                    Andere Stelle
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -2099,6 +2146,56 @@ const styles = {
     fontSize: '12px',
     fontWeight: 'bold',
     whiteSpace: 'nowrap',
+  },
+  placementConfirmOverlay: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 50,
+    pointerEvents: 'none',
+  },
+  placementConfirmDialog: {
+    backgroundColor: 'rgba(30, 60, 30, 0.95)',
+    border: '2px solid rgba(255,255,255,0.3)',
+    borderRadius: '12px',
+    padding: '20px 28px',
+    textAlign: 'center',
+    pointerEvents: 'auto',
+  },
+  placementConfirmTitle: {
+    color: '#fff',
+    fontSize: '16px',
+    fontWeight: 'bold',
+    marginBottom: '14px',
+  },
+  placementConfirmButtons: {
+    display: 'flex',
+    gap: '10px',
+    justifyContent: 'center',
+  },
+  placementConfirmBtn: {
+    padding: '8px 20px',
+    backgroundColor: '#4a8c3f',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: 'bold',
+  },
+  placementCancelConfirmBtn: {
+    padding: '8px 20px',
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    color: '#fff',
+    border: '1px solid rgba(255,255,255,0.3)',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    fontSize: '14px',
   },
   vacationBanner: {
     position: 'fixed',

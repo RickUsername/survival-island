@@ -43,9 +43,18 @@
           var refreshing = false;
 
           // 1) Controller-Wechsel erkennen: Wenn ein NEUER SW die Kontrolle übernimmt → Reload
-          //    Das ist der zuverlässigste Weg für PWA-Updates
+          //    ABER: Nicht während der App-Initialisierung (sonst Endlos-Reload)
           navigator.serviceWorker.addEventListener('controllerchange', function() {
             if (refreshing) return;
+            if (!window.__appReady) {
+              console.log('[PWA] SW-Wechsel während Laden — warte...');
+              setTimeout(function() {
+                if (refreshing) return;
+                refreshing = true;
+                window.location.reload();
+              }, 8000);
+              return;
+            }
             refreshing = true;
             console.log('[PWA] Neuer Service Worker aktiv — lade neu...');
             window.location.reload();

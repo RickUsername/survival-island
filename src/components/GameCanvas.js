@@ -454,31 +454,400 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
   // Einzelnes Gebäude an Position zeichnen (wiederverwendbar für normal + ghost)
   const drawShelter = useCallback((ctx, sx, sy, level, alpha) => {
     ctx.globalAlpha = alpha;
-    const size = 40 + level * 6;
-    const offset = (TILE_SIZE - size) / 2;
+    const cx = sx + TILE_SIZE / 2;
 
-    // Wände
-    ctx.fillStyle = `hsl(30, ${30 + level * 10}%, ${40 + level * 5}%)`;
-    ctx.fillRect(sx + offset, sy + offset + 10, size, size - 10);
+    switch (level) {
+      case 1: {
+        // === Unterstand: Schräges Blätterdach auf 2 Stöcken ===
+        // Laubstreu am Boden
+        ctx.fillStyle = '#5a7a3a';
+        ctx.fillRect(sx + 10, sy + 48, 44, 14);
+        ctx.fillStyle = '#4a6a2f';
+        ctx.fillRect(sx + 14, sy + 50, 36, 10);
 
-    // Dach
-    ctx.fillStyle = `hsl(15, ${40 + level * 8}%, ${30 + level * 5}%)`;
-    ctx.beginPath();
-    ctx.moveTo(sx + offset - 5, sy + offset + 10);
-    ctx.lineTo(sx + TILE_SIZE / 2, sy + offset - 8);
-    ctx.lineTo(sx + offset + size + 5, sy + offset + 10);
-    ctx.closePath();
-    ctx.fill();
+        // Stöcke (Stützen)
+        ctx.strokeStyle = '#6b4226';
+        ctx.lineWidth = 3;
+        // Linker Stock
+        ctx.beginPath();
+        ctx.moveTo(sx + 14, sy + 58);
+        ctx.lineTo(sx + 18, sy + 22);
+        ctx.stroke();
+        // Rechter Stock
+        ctx.beginPath();
+        ctx.moveTo(sx + 50, sy + 58);
+        ctx.lineTo(sx + 46, sy + 30);
+        ctx.stroke();
 
-    // Tür
-    ctx.fillStyle = '#3a2010';
-    ctx.fillRect(sx + TILE_SIZE / 2 - 6, sy + offset + size - 18, 12, 18);
+        // Schräges Blätterdach
+        ctx.fillStyle = '#3d7a1a';
+        ctx.beginPath();
+        ctx.moveTo(sx + 8, sy + 38);
+        ctx.lineTo(sx + 16, sy + 16);
+        ctx.lineTo(sx + 56, sy + 24);
+        ctx.lineTo(sx + 52, sy + 42);
+        ctx.closePath();
+        ctx.fill();
+        // Blatt-Streifen
+        ctx.fillStyle = '#4d8a2a';
+        ctx.beginPath();
+        ctx.moveTo(sx + 10, sy + 34);
+        ctx.lineTo(sx + 18, sy + 18);
+        ctx.lineTo(sx + 54, sy + 26);
+        ctx.lineTo(sx + 50, sy + 38);
+        ctx.closePath();
+        ctx.fill();
+        break;
+      }
+      case 2: {
+        // === Hütte: Holzwände, Strohdach, Tür, Fenster ===
+        const w = 44, h = 30;
+        const bx = cx - w / 2, by = sy + 28;
+
+        // Holzwände
+        ctx.fillStyle = '#8B6B3F';
+        ctx.fillRect(bx, by, w, h);
+        // Holz-Planken-Linien
+        ctx.strokeStyle = '#6b4f2a';
+        ctx.lineWidth = 1;
+        for (let i = 1; i < 4; i++) {
+          ctx.beginPath();
+          ctx.moveTo(bx, by + i * (h / 4));
+          ctx.lineTo(bx + w, by + i * (h / 4));
+          ctx.stroke();
+        }
+
+        // Strohdach
+        ctx.fillStyle = '#c4a243';
+        ctx.beginPath();
+        ctx.moveTo(bx - 6, by);
+        ctx.lineTo(cx, sy + 10);
+        ctx.lineTo(bx + w + 6, by);
+        ctx.closePath();
+        ctx.fill();
+        // Stroh-Streifen
+        ctx.strokeStyle = '#a88a30';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(bx - 2, by - 3);
+        ctx.lineTo(cx, sy + 14);
+        ctx.lineTo(bx + w + 2, by - 3);
+        ctx.stroke();
+
+        // Tür
+        ctx.fillStyle = '#3a2010';
+        ctx.fillRect(cx - 5, by + h - 16, 10, 16);
+        // Türknauf
+        ctx.fillStyle = '#c0a040';
+        ctx.beginPath();
+        ctx.arc(cx + 2, by + h - 8, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Fenster
+        ctx.fillStyle = '#87CEEB';
+        ctx.fillRect(bx + 5, by + 6, 8, 8);
+        ctx.strokeStyle = '#5a3a1a';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(bx + 5, by + 6, 8, 8);
+        // Fensterkreuz
+        ctx.beginPath();
+        ctx.moveTo(bx + 9, by + 6);
+        ctx.lineTo(bx + 9, by + 14);
+        ctx.moveTo(bx + 5, by + 10);
+        ctx.lineTo(bx + 13, by + 10);
+        ctx.stroke();
+        break;
+      }
+      case 3: {
+        // === Blockhaus: Blockbalken-Wände, Giebeldach, Schornstein, 2 Fenster ===
+        const w = 48, h = 32;
+        const bx = cx - w / 2, by = sy + 26;
+
+        // Blockbalken-Wände
+        ctx.fillStyle = '#7a5a30';
+        ctx.fillRect(bx, by, w, h);
+        // Balken-Linien
+        ctx.strokeStyle = '#5a3a18';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < 5; i++) {
+          const yy = by + 3 + i * 6;
+          ctx.beginPath();
+          ctx.moveTo(bx, yy);
+          ctx.lineTo(bx + w, yy);
+          ctx.stroke();
+        }
+        // Balken-Enden (überstehend)
+        ctx.fillStyle = '#6a4a28';
+        ctx.fillRect(bx - 3, by, 3, h);
+        ctx.fillRect(bx + w, by, 3, h);
+
+        // Giebeldach
+        ctx.fillStyle = '#8B4513';
+        ctx.beginPath();
+        ctx.moveTo(bx - 5, by);
+        ctx.lineTo(cx, sy + 8);
+        ctx.lineTo(bx + w + 5, by);
+        ctx.closePath();
+        ctx.fill();
+        // Dachfirst
+        ctx.strokeStyle = '#5a2a08';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(bx - 5, by);
+        ctx.lineTo(cx, sy + 8);
+        ctx.lineTo(bx + w + 5, by);
+        ctx.stroke();
+
+        // Schornstein
+        ctx.fillStyle = '#666';
+        ctx.fillRect(bx + w - 12, sy + 6, 8, 14);
+        ctx.fillStyle = '#555';
+        ctx.fillRect(bx + w - 13, sy + 4, 10, 4);
+
+        // Tür
+        ctx.fillStyle = '#3a2010';
+        ctx.fillRect(cx - 6, by + h - 18, 12, 18);
+        ctx.fillStyle = '#c0a040';
+        ctx.beginPath();
+        ctx.arc(cx + 3, by + h - 9, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 2 Fenster
+        for (const fx of [bx + 5, bx + w - 13]) {
+          ctx.fillStyle = '#87CEEB';
+          ctx.fillRect(fx, by + 8, 8, 8);
+          ctx.strokeStyle = '#5a3a1a';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(fx, by + 8, 8, 8);
+          ctx.beginPath();
+          ctx.moveTo(fx + 4, by + 8);
+          ctx.lineTo(fx + 4, by + 16);
+          ctx.moveTo(fx, by + 12);
+          ctx.lineTo(fx + 8, by + 12);
+          ctx.stroke();
+        }
+        break;
+      }
+      case 4: {
+        // === Steinhaus: Steinmauer, Ziegeldach, 2 Fenster mit Rahmen, Rauch ===
+        const w = 50, h = 34;
+        const bx = cx - w / 2, by = sy + 24;
+
+        // Steinmauer
+        ctx.fillStyle = '#888';
+        ctx.fillRect(bx, by, w, h);
+        // Steinmuster
+        ctx.strokeStyle = '#666';
+        ctx.lineWidth = 1;
+        for (let row = 0; row < 4; row++) {
+          const yy = by + row * 8;
+          ctx.beginPath();
+          ctx.moveTo(bx, yy + 8);
+          ctx.lineTo(bx + w, yy + 8);
+          ctx.stroke();
+          const stoneOffset = row % 2 === 0 ? 0 : 10;
+          for (let col = stoneOffset; col < w; col += 20) {
+            ctx.beginPath();
+            ctx.moveTo(bx + col, yy);
+            ctx.lineTo(bx + col, yy + 8);
+            ctx.stroke();
+          }
+        }
+
+        // Ziegeldach
+        ctx.fillStyle = '#B0463C';
+        ctx.beginPath();
+        ctx.moveTo(bx - 6, by);
+        ctx.lineTo(cx, sy + 6);
+        ctx.lineTo(bx + w + 6, by);
+        ctx.closePath();
+        ctx.fill();
+        // Dachziegel-Linien
+        ctx.strokeStyle = '#8a3028';
+        ctx.lineWidth = 1;
+        for (let i = 1; i <= 3; i++) {
+          const t = i / 4;
+          const ly = by + (sy + 6 - by) * t;
+          const lx1 = bx - 6 + (cx - bx + 6) * t - (1 - t) * 4;
+          const lx2 = bx + w + 6 - (bx + w + 6 - cx) * t + (1 - t) * 4;
+          ctx.beginPath();
+          ctx.moveTo(lx1, ly);
+          ctx.lineTo(lx2, ly);
+          ctx.stroke();
+        }
+
+        // Schornstein mit Rauch
+        ctx.fillStyle = '#555';
+        ctx.fillRect(bx + w - 14, sy + 2, 10, 16);
+        ctx.fillStyle = '#444';
+        ctx.fillRect(bx + w - 15, sy, 12, 4);
+        // Rauch
+        ctx.fillStyle = 'rgba(200,200,200,0.4)';
+        const t = (Date.now() / 800) % 3;
+        for (let i = 0; i < 3; i++) {
+          const smokeY = sy - 2 - (t + i * 4) * 2;
+          const smokeR = 2 + i * 1.5;
+          ctx.beginPath();
+          ctx.arc(bx + w - 9 + Math.sin(t + i) * 2, smokeY, smokeR, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Tür (größer)
+        ctx.fillStyle = '#4a2a10';
+        ctx.fillRect(cx - 7, by + h - 20, 14, 20);
+        ctx.strokeStyle = '#3a1a08';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(cx - 7, by + h - 20, 14, 20);
+        // Türknauf
+        ctx.fillStyle = '#d4a840';
+        ctx.beginPath();
+        ctx.arc(cx + 4, by + h - 10, 2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 2 Fenster mit Rahmen
+        for (const fx of [bx + 4, bx + w - 14]) {
+          // Rahmen
+          ctx.fillStyle = '#5a3a1a';
+          ctx.fillRect(fx - 1, by + 8, 12, 12);
+          // Glas
+          ctx.fillStyle = '#a0d8f0';
+          ctx.fillRect(fx, by + 9, 10, 10);
+          // Kreuz
+          ctx.strokeStyle = '#5a3a1a';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(fx + 5, by + 9);
+          ctx.lineTo(fx + 5, by + 19);
+          ctx.moveTo(fx, by + 14);
+          ctx.lineTo(fx + 10, by + 14);
+          ctx.stroke();
+        }
+        break;
+      }
+      case 5:
+      default: {
+        // === Villa: Zweistöckig, Balkon, mehrere Fenster, Steinfundament, verziertes Dach ===
+        const w = 54, h = 42;
+        const bx = cx - w / 2, by = sy + 18;
+
+        // Steinfundament
+        ctx.fillStyle = '#777';
+        ctx.fillRect(bx - 2, by + h - 4, w + 4, 6);
+
+        // Untergeschoss
+        ctx.fillStyle = '#c8b898';
+        ctx.fillRect(bx, by + h / 2, w, h / 2);
+        // Obergeschoss
+        ctx.fillStyle = '#d4c4a8';
+        ctx.fillRect(bx, by, w, h / 2);
+        // Geschoss-Trennung
+        ctx.fillStyle = '#8a7a5a';
+        ctx.fillRect(bx, by + h / 2 - 1, w, 3);
+
+        // Verziertes Dach
+        ctx.fillStyle = '#6a2828';
+        ctx.beginPath();
+        ctx.moveTo(bx - 6, by);
+        ctx.lineTo(cx, sy + 2);
+        ctx.lineTo(bx + w + 6, by);
+        ctx.closePath();
+        ctx.fill();
+        // Dachverzierung
+        ctx.strokeStyle = '#4a1818';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(bx - 6, by);
+        ctx.lineTo(cx, sy + 2);
+        ctx.lineTo(bx + w + 6, by);
+        ctx.stroke();
+        // Dachspitze-Ornament
+        ctx.fillStyle = '#d4a840';
+        ctx.beginPath();
+        ctx.arc(cx, sy + 1, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Schornstein
+        ctx.fillStyle = '#555';
+        ctx.fillRect(bx + w - 12, sy - 2, 8, 14);
+        ctx.fillStyle = '#444';
+        ctx.fillRect(bx + w - 13, sy - 4, 10, 4);
+        // Rauch
+        ctx.fillStyle = 'rgba(200,200,200,0.35)';
+        const t5 = (Date.now() / 900) % 3;
+        for (let i = 0; i < 3; i++) {
+          ctx.beginPath();
+          ctx.arc(bx + w - 8 + Math.sin(t5 + i) * 2, sy - 6 - (t5 + i * 3) * 2, 2 + i, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Balkon (Obergeschoss Mitte)
+        ctx.fillStyle = '#8a7a5a';
+        ctx.fillRect(cx - 12, by + h / 2 - 3, 24, 3);
+        // Balkongeländer
+        ctx.strokeStyle = '#6a5a3a';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(cx - 12, by + h / 2 - 10, 24, 8);
+        // Geländer-Stäbe
+        for (let i = 0; i < 4; i++) {
+          ctx.beginPath();
+          ctx.moveTo(cx - 10 + i * 7, by + h / 2 - 10);
+          ctx.lineTo(cx - 10 + i * 7, by + h / 2 - 2);
+          ctx.stroke();
+        }
+
+        // Tür (Untergeschoss, mittig)
+        ctx.fillStyle = '#3a1a08';
+        ctx.fillRect(cx - 7, by + h - 18, 14, 18);
+        // Tür-Rahmen
+        ctx.strokeStyle = '#8a7a5a';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(cx - 7, by + h - 18, 14, 18);
+        // Türknauf
+        ctx.fillStyle = '#d4a840';
+        ctx.beginPath();
+        ctx.arc(cx + 4, by + h - 9, 2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Fenster Obergeschoss (3 Stück)
+        for (const fx of [bx + 4, cx - 4, bx + w - 12]) {
+          ctx.fillStyle = '#a0d8f0';
+          ctx.fillRect(fx, by + 6, 8, 10);
+          ctx.strokeStyle = '#5a4a2a';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(fx, by + 6, 8, 10);
+          ctx.beginPath();
+          ctx.moveTo(fx + 4, by + 6);
+          ctx.lineTo(fx + 4, by + 16);
+          ctx.moveTo(fx, by + 11);
+          ctx.lineTo(fx + 8, by + 11);
+          ctx.stroke();
+        }
+        // Fenster Untergeschoss (2 Stück, neben Tür)
+        for (const fx of [bx + 4, bx + w - 12]) {
+          ctx.fillStyle = '#a0d8f0';
+          ctx.fillRect(fx, by + h / 2 + 4, 8, 10);
+          ctx.strokeStyle = '#5a4a2a';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(fx, by + h / 2 + 4, 8, 10);
+          ctx.beginPath();
+          ctx.moveTo(fx + 4, by + h / 2 + 4);
+          ctx.lineTo(fx + 4, by + h / 2 + 14);
+          ctx.moveTo(fx, by + h / 2 + 9);
+          ctx.lineTo(fx + 8, by + h / 2 + 9);
+          ctx.stroke();
+        }
+        break;
+      }
+    }
 
     // Level-Anzeige
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 10px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(`Lv.${level}`, sx + TILE_SIZE / 2, sy + offset);
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+    ctx.lineWidth = 2;
+    ctx.strokeText(`Lv.${level}`, cx, sy + TILE_SIZE - 2);
+    ctx.fillText(`Lv.${level}`, cx, sy + TILE_SIZE - 2);
     ctx.globalAlpha = 1;
   }, []);
 
