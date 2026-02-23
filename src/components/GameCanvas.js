@@ -72,23 +72,151 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
     ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
 
     // Kacheldetails
-    switch (tileType) {
-      case TILE_TYPES.TREE:
-        // Baumstamm
-        ctx.fillStyle = '#5c3a1e';
-        ctx.fillRect(x + 26, y + 35, 12, 29);
-        // Baumkrone
-        ctx.fillStyle = '#2d7a1e';
-        ctx.beginPath();
-        ctx.arc(x + 32, y + 25, 20, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#1e6016';
-        ctx.beginPath();
-        ctx.arc(x + 28, y + 20, 14, 0, Math.PI * 2);
-        ctx.fill();
-        break;
+    // Deterministischer Pseudo-Zufall mit Bit-Mixing (keine linearen Muster)
+    const seed = col * 7919 + row * 6271;
+    const rand = (i) => {
+      let h = (seed + i * 48271) | 0;
+      h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
+      h = Math.imul(h ^ (h >>> 13), 0x45d9f3b);
+      h = (h ^ (h >>> 16)) >>> 0;
+      return h / 4294967295;
+    };
 
-      case TILE_TYPES.WATER:
+    switch (tileType) {
+      case TILE_TYPES.TREE: {
+        // === Detaillierter Randbaum mit sichtbarem Stamm ===
+        const tcx = x + 32;
+
+        // Bodenschatten (Ellipse unter dem Baum)
+        ctx.fillStyle = 'rgba(0,40,0,0.2)';
+        ctx.beginPath();
+        ctx.ellipse(tcx, y + 60, 24, 6, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Wurzeln (sichtbar am Boden)
+        ctx.strokeStyle = '#4a2a10';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(tcx - 5, y + 52);
+        ctx.quadraticCurveTo(x + 8, y + 58, x + 4, y + 63);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(tcx + 5, y + 52);
+        ctx.quadraticCurveTo(x + 52, y + 56, x + 58, y + 62);
+        ctx.stroke();
+        // Kleine Wurzel
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(tcx - 2, y + 54);
+        ctx.quadraticCurveTo(x + 18, y + 60, x + 14, y + 64);
+        ctx.stroke();
+
+        // Baumstamm (breit, konisch, deutlich sichtbar)
+        ctx.fillStyle = '#5c3a1e';
+        ctx.beginPath();
+        ctx.moveTo(tcx - 9, y + 56);   // Basis links (breit)
+        ctx.lineTo(tcx - 5, y + 22);    // Oben links (schmaler)
+        ctx.lineTo(tcx + 5, y + 22);    // Oben rechts
+        ctx.lineTo(tcx + 9, y + 56);    // Basis rechts
+        ctx.closePath();
+        ctx.fill();
+
+        // Rinden-Textur (vertikale + horizontale Linien)
+        ctx.strokeStyle = '#3a2210';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(tcx - 3, y + 54);
+        ctx.lineTo(tcx - 2, y + 26);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(tcx + 3, y + 52);
+        ctx.lineTo(tcx + 2, y + 28);
+        ctx.stroke();
+        // Horizontale Rinden-Ringe
+        ctx.strokeStyle = '#4a2a14';
+        ctx.lineWidth = 0.8;
+        for (let ri = 0; ri < 3; ri++) {
+          const ry = y + 30 + ri * 8;
+          const rw = 6 + (ri * 1.5);
+          ctx.beginPath();
+          ctx.moveTo(tcx - rw, ry);
+          ctx.quadraticCurveTo(tcx, ry + 1.5, tcx + rw, ry);
+          ctx.stroke();
+        }
+
+        // Hellerer Streifen (Licht auf Rinde)
+        ctx.fillStyle = 'rgba(120,80,40,0.25)';
+        ctx.beginPath();
+        ctx.moveTo(tcx + 1, y + 54);
+        ctx.lineTo(tcx + 3, y + 24);
+        ctx.lineTo(tcx + 6, y + 24);
+        ctx.lineTo(tcx + 7, y + 54);
+        ctx.closePath();
+        ctx.fill();
+
+        // Ast links
+        ctx.strokeStyle = '#4a2a12';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(tcx - 4, y + 30);
+        ctx.quadraticCurveTo(x + 10, y + 22, x + 6, y + 14);
+        ctx.stroke();
+        // Ast rechts
+        ctx.beginPath();
+        ctx.moveTo(tcx + 4, y + 26);
+        ctx.quadraticCurveTo(x + 50, y + 18, x + 56, y + 12);
+        ctx.stroke();
+
+        // Baumkrone (mehrere Schichten, versetzt nach oben)
+        // Schatten-Schicht (größte, dunkelste)
+        ctx.fillStyle = '#1a5a10';
+        ctx.beginPath();
+        ctx.arc(tcx, y + 20, 22, 0, Math.PI * 2);
+        ctx.fill();
+        // Hauptkrone
+        ctx.fillStyle = '#257218';
+        ctx.beginPath();
+        ctx.arc(tcx - 4, y + 14, 17, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(tcx + 8, y + 17, 14, 0, Math.PI * 2);
+        ctx.fill();
+        // Mittlere Schicht
+        ctx.fillStyle = '#2d8a20';
+        ctx.beginPath();
+        ctx.arc(tcx - 6, y + 10, 13, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(tcx + 6, y + 12, 11, 0, Math.PI * 2);
+        ctx.fill();
+        // Helle Akzente (Sonnenlicht oben)
+        ctx.fillStyle = '#3a9a2e';
+        ctx.beginPath();
+        ctx.arc(tcx - 2, y + 6, 9, 0, Math.PI * 2);
+        ctx.fill();
+        // Top-Highlight
+        ctx.fillStyle = '#4aaa38';
+        ctx.beginPath();
+        ctx.arc(tcx - 4, y + 4, 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Gelegentlich Beeren oder Äpfel
+        if (rand(0) > 0.5) {
+          ctx.fillStyle = '#d03030';
+          ctx.beginPath();
+          ctx.arc(x + 16 + rand(1) * 30, y + 10 + rand(2) * 16, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (rand(5) > 0.7) {
+          ctx.fillStyle = '#c82828';
+          ctx.beginPath();
+          ctx.arc(x + 20 + rand(6) * 24, y + 16 + rand(7) * 10, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+      }
+
+      case TILE_TYPES.WATER: {
         // Welleneffekt
         ctx.fillStyle = '#4a8de5';
         const time = Date.now() / 1000;
@@ -97,26 +225,7 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
           ctx.fillRect(x + 5, waveY, TILE_SIZE - 10, 2);
         }
         break;
-
-      case TILE_TYPES.ROCK:
-        // Stein-Form
-        ctx.fillStyle = '#6a6a6a';
-        ctx.beginPath();
-        ctx.moveTo(x + 10, y + TILE_SIZE - 10);
-        ctx.lineTo(x + 20, y + 12);
-        ctx.lineTo(x + 45, y + 10);
-        ctx.lineTo(x + TILE_SIZE - 8, y + TILE_SIZE - 10);
-        ctx.closePath();
-        ctx.fill();
-        ctx.fillStyle = '#999';
-        ctx.beginPath();
-        ctx.moveTo(x + 20, y + 12);
-        ctx.lineTo(x + 32, y + 8);
-        ctx.lineTo(x + 45, y + 10);
-        ctx.lineTo(x + 32, y + 20);
-        ctx.closePath();
-        ctx.fill();
-        break;
+      }
 
       case TILE_TYPES.BUSH:
         // Busch
@@ -136,32 +245,158 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
         ctx.beginPath(); ctx.arc(x + 28, y + 42, 3, 0, Math.PI * 2); ctx.fill();
         break;
 
-      case TILE_TYPES.SAND:
-        // Sand-Textur
-        ctx.fillStyle = '#d4c07a';
-        for (let i = 0; i < 5; i++) {
-          ctx.fillRect(
-            x + (i * 13 + 3) % TILE_SIZE,
-            y + (i * 17 + 7) % TILE_SIZE,
-            2, 2
-          );
+      case TILE_TYPES.GRASS: {
+        // === Detaillierter Rasen ===
+        // Basis-Farbvariation pro Tile (natürliche Patches)
+        const shade = rand(0) * 0.1 - 0.05;
+        const gr = Math.round(74 + shade * 180);
+        const gg = Math.round(140 + shade * 180);
+        const gb = Math.round(63 + shade * 180);
+        ctx.fillStyle = `rgb(${gr},${gg},${gb})`;
+        ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+
+        // Weiche Farbflecken (heller/dunkler Patches für Tiefe)
+        ctx.fillStyle = `rgba(${60 + Math.floor(rand(40) * 30)}, ${120 + Math.floor(rand(41) * 40)}, ${40 + Math.floor(rand(42) * 30)}, 0.3)`;
+        ctx.beginPath();
+        ctx.ellipse(x + 10 + rand(43) * 44, y + 10 + rand(44) * 44, 12 + rand(45) * 8, 8 + rand(46) * 6, rand(47) * Math.PI, 0, Math.PI * 2);
+        ctx.fill();
+        // Zweiter Patch
+        ctx.fillStyle = `rgba(${80 + Math.floor(rand(50) * 20)}, ${155 + Math.floor(rand(51) * 25)}, ${55 + Math.floor(rand(52) * 20)}, 0.25)`;
+        ctx.beginPath();
+        ctx.ellipse(x + 20 + rand(53) * 30, y + 20 + rand(54) * 30, 10 + rand(55) * 6, 7 + rand(56) * 4, rand(57) * Math.PI, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Grashalme (10-14 Stück pro Tile)
+        const bladeCount = 10 + Math.floor(rand(1) * 5);
+        for (let i = 0; i < bladeCount; i++) {
+          const bx = x + 3 + rand(i * 4 + 10) * 58;
+          const by = y + 12 + rand(i * 4 + 11) * 42;
+          const bh = 4 + rand(i * 4 + 12) * 8;
+          const lean = (rand(i * 4 + 13) - 0.5) * 5;
+          const greenVal = 130 + Math.floor(rand(i * 4 + 14) * 50);
+          // Halm
+          ctx.strokeStyle = `rgba(60, ${greenVal}, 35, 0.55)`;
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.moveTo(bx, by);
+          ctx.quadraticCurveTo(bx + lean * 0.5, by - bh * 0.5, bx + lean, by - bh);
+          ctx.stroke();
+        }
+
+        // Gras-Büschel (2-3 dichtere Stellen)
+        const tuftCount = 2 + Math.floor(rand(60) * 2);
+        for (let t = 0; t < tuftCount; t++) {
+          const tx2 = x + 8 + rand(t * 5 + 70) * 48;
+          const ty2 = y + 10 + rand(t * 5 + 71) * 44;
+          ctx.fillStyle = `rgba(55, ${140 + Math.floor(rand(t * 5 + 72) * 30)}, 40, 0.35)`;
+          ctx.beginPath();
+          ctx.ellipse(tx2, ty2, 4 + rand(t * 5 + 73) * 3, 2.5, rand(t * 5 + 74) * Math.PI, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Blumen (1-3 pro Tile, divers verteilt)
+        const flowerCount = 1 + Math.floor(rand(200) * 3);
+        for (let f = 0; f < flowerCount; f++) {
+          const base = 210 + f * 13;
+          // 40% Chance pro Slot, dass tatsächlich eine Blume erscheint
+          if (rand(base) > 0.6) continue;
+          const fx = x + 4 + rand(base + 1) * 54;
+          const fy = y + 4 + rand(base + 2) * 54;
+          const flowerType = rand(base + 3);
+
+          if (flowerType > 0.8) {
+            // Gänseblümchen (weiß mit gelbem Kern)
+            ctx.fillStyle = '#fff';
+            for (let p = 0; p < 5; p++) {
+              const angle = (p / 5) * Math.PI * 2 + rand(base + 4) * 0.5;
+              ctx.beginPath();
+              ctx.ellipse(fx + Math.cos(angle) * 3, fy + Math.sin(angle) * 3, 2, 1.2, angle, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            ctx.fillStyle = '#f0d020';
+            ctx.beginPath();
+            ctx.arc(fx, fy, 1.8, 0, Math.PI * 2);
+            ctx.fill();
+          } else if (flowerType > 0.6) {
+            // Butterblume (gelb)
+            ctx.fillStyle = '#f0c020';
+            for (let p = 0; p < 4; p++) {
+              const angle = (p / 4) * Math.PI * 2 + rand(base + 5) * 0.3;
+              ctx.beginPath();
+              ctx.arc(fx + Math.cos(angle) * 2, fy + Math.sin(angle) * 2, 1.5, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            ctx.fillStyle = '#e0a010';
+            ctx.beginPath();
+            ctx.arc(fx, fy, 1.2, 0, Math.PI * 2);
+            ctx.fill();
+          } else if (flowerType > 0.4) {
+            // Klee (3 kleine grüne Blätter)
+            ctx.fillStyle = '#3a8a28';
+            for (let p = 0; p < 3; p++) {
+              const angle = (p / 3) * Math.PI * 2 - Math.PI / 2;
+              ctx.beginPath();
+              ctx.ellipse(fx + Math.cos(angle) * 2.5, fy + Math.sin(angle) * 2.5, 2.5, 1.8, angle, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            ctx.strokeStyle = '#2a6a18';
+            ctx.lineWidth = 0.8;
+            ctx.beginPath();
+            ctx.moveTo(fx, fy + 2);
+            ctx.lineTo(fx, fy + 6);
+            ctx.stroke();
+          } else if (flowerType > 0.2) {
+            // Lila Blume
+            ctx.fillStyle = '#9060c0';
+            for (let p = 0; p < 4; p++) {
+              const angle = (p / 4) * Math.PI * 2 + rand(base + 6) * 0.4;
+              ctx.beginPath();
+              ctx.arc(fx + Math.cos(angle) * 1.8, fy + Math.sin(angle) * 1.8, 1.3, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            ctx.fillStyle = '#f0e060';
+            ctx.beginPath();
+            ctx.arc(fx, fy, 1, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            // Rosa Blume
+            ctx.fillStyle = '#c06090';
+            for (let p = 0; p < 5; p++) {
+              const angle = (p / 5) * Math.PI * 2 + rand(base + 7) * 0.3;
+              ctx.beginPath();
+              ctx.arc(fx + Math.cos(angle) * 2, fy + Math.sin(angle) * 2, 1.4, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            ctx.fillStyle = '#f0d0e0';
+            ctx.beginPath();
+            ctx.arc(fx, fy, 1.1, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+
+        // Kleiner Stein (10% Chance)
+        if (rand(3) > 0.9) {
+          const sx2 = x + 12 + rand(30) * 40;
+          const sy2 = y + 14 + rand(31) * 36;
+          ctx.fillStyle = '#7a7a6a';
+          ctx.beginPath();
+          ctx.ellipse(sx2, sy2, 3.5, 2, rand(32) * Math.PI, 0, Math.PI * 2);
+          ctx.fill();
+          // Highlight
+          ctx.fillStyle = '#9a9a88';
+          ctx.beginPath();
+          ctx.ellipse(sx2 - 0.5, sy2 - 0.5, 2, 1.2, rand(32) * Math.PI, 0, Math.PI * 2);
+          ctx.fill();
         }
         break;
-
-      case TILE_TYPES.GRASS:
-        // Gras-Details
-        ctx.fillStyle = '#5a9c4f';
-        ctx.fillRect(x + 10, y + 20, 2, 8);
-        ctx.fillRect(x + 30, y + 40, 2, 8);
-        ctx.fillRect(x + 50, y + 15, 2, 8);
-        break;
+      }
 
       default:
         break;
     }
 
     // Gitterlinien (dezent)
-    ctx.strokeStyle = 'rgba(0,0,0,0.05)';
+    ctx.strokeStyle = 'rgba(0,0,0,0.03)';
     ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE);
   }, []);
 

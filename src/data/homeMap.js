@@ -21,8 +21,8 @@ const homeMap = [
   [T.T, T.G, T.G, T.G, T.G, T.B, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.B, T.G, T.G, T.G, T.G, T.T],
   // Reihe 2
   [T.T, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.T],
-  // Reihe 3 (linker Felsen → jetzt Baum-Position col 3)
-  [T.T, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.R, T.G, T.G, T.T],
+  // Reihe 3 (Baum-Position col 3)
+  [T.T, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.T],
   // Reihe 4
   [T.T, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.T],
   // Reihe 5 (Westen - Felder-Ausgang)
@@ -42,7 +42,7 @@ const homeMap = [
   // Reihe 12
   [T.T, T.G, T.G, T.B, T.G, T.G, T.G, T.G, T.W, T.W, T.W, T.G, T.G, T.G, T.G, T.B, T.G, T.G, T.G, T.T],
   // Reihe 13
-  [T.T, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.S, T.S, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.T],
+  [T.T, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.G, T.T],
   // Reihe 14 (Süden - See-Ausgang)
   [T.T, T.T, T.T, T.T, T.T, T.T, T.T, T.G, T.G, T.G, T.G, T.G, T.G, T.T, T.T, T.T, T.T, T.T, T.T, T.T],
 ];
