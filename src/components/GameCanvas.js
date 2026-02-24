@@ -15,6 +15,23 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
   const canvasRef = useRef(null);
   const animFrame = useRef(null);
 
+  // Refs für den Render-Loop: So muss requestAnimationFrame nicht bei jedem
+  // State-Update neu gestartet werden (das verursachte Frame-Drops)
+  const gameStateRef = useRef(gameState);
+  const placementGhostRef = useRef(placementGhost);
+  const visitModeRef = useRef(visitMode);
+  const visitorPositionRef = useRef(visitorPosition);
+  const hostSnapshotRef = useRef(hostSnapshot);
+  gameStateRef.current = gameState;
+  placementGhostRef.current = placementGhost;
+  visitModeRef.current = visitMode;
+  visitorPositionRef.current = visitorPosition;
+  hostSnapshotRef.current = hostSnapshot;
+
+  // Refs für Draw-Funktionen: werden nach jeder useCallback-Änderung aktualisiert,
+  // aber der Render-Loop liest nur aus Refs → kein RAF-Neustart nötig
+  const drawFnsRef = useRef({});
+
   // Pinch-to-Zoom: Zoom-Level (1.0 = Standard, rausgezoomt bis gesamte Map sichtbar)
   const [zoomLevel, setZoomLevel] = useState(1.0);
   const pinchRef = useRef({ active: false, startDist: 0, startZoom: 1.0 });
@@ -2065,9 +2082,11 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
     }
   }, [gameState]);
 
-  // Wetter-Overlay
+  // Wetter-Overlay (optimiert: alle Tropfen in einem einzigen Path gezeichnet
+  // statt 200 einzelner stroke()-Aufrufe pro Frame)
   const drawWeather = useCallback((ctx, width, height) => {
-    if (!gameState || gameState.weather !== 'rainy') return;
+    const state = gameStateRef.current;
+    if (!state || state.weather !== 'rainy') return;
 
     const time = Date.now();
 
@@ -2075,35 +2094,33 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
     ctx.fillStyle = 'rgba(0, 10, 30, 0.2)';
     ctx.fillRect(0, 0, width, height);
 
-    // Regentropfen - viele kleine, schnelle Tropfen
-    const dropCount = 200;
-    const speed = time / 30; // Schnelle Bewegung
+    // Regentropfen - alle in einem Batch (1 stroke statt 200)
+    const dropCount = 150;
+    const speed = time / 30;
+
+    ctx.strokeStyle = 'rgba(160, 190, 230, 0.25)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
 
     for (let i = 0; i < dropCount; i++) {
-      // Pseudo-Zufall pro Tropfen basierend auf Index
       const seed = i * 7919 + 1327;
       const xBase = (seed * 13) % width;
-      const ySpeed = 4 + (seed % 3); // Verschiedene Geschwindigkeiten
-      const dropLen = 10 + (seed % 12); // Verschiedene Längen
+      const ySpeed = 4 + (seed % 3);
+      const dropLen = 10 + (seed % 12);
 
       const x = (xBase + speed * 0.3) % (width + 40) - 20;
       const y = (speed * ySpeed + (seed * 47) % height) % (height + dropLen) - dropLen;
 
-      // Wind-Effekt: leicht schräg
-      const windOffset = -3;
-
-      // Tropfen zeichnen
-      ctx.strokeStyle = `rgba(160, 190, 230, ${0.2 + (seed % 30) / 100})`;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
       ctx.moveTo(x, y);
-      ctx.lineTo(x + windOffset, y + dropLen);
-      ctx.stroke();
+      ctx.lineTo(x - 3, y + dropLen);
     }
 
-    // Splash-Effekte am Boden (weniger, aber sichtbar)
+    ctx.stroke();
+
+    // Splash-Effekte am Boden - ebenfalls gebatcht
     ctx.fillStyle = 'rgba(160, 190, 230, 0.15)';
-    for (let i = 0; i < 30; i++) {
+    ctx.beginPath();
+    for (let i = 0; i < 20; i++) {
       const seed = i * 3571 + 997;
       const sx = (seed * 29 + time / 8) % width;
       const sy = height - 20 + (seed % 40);
@@ -2111,12 +2128,12 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
 
       if (phase < 0.3) {
         const radius = phase * 8;
-        ctx.beginPath();
+        ctx.moveTo(sx + radius, sy);
         ctx.arc(sx, sy, radius, 0, Math.PI * 2);
-        ctx.fill();
       }
     }
-  }, [gameState]);
+    ctx.fill();
+  }, []);
 
   // Ausgangs-Markierungen zeichnen
   // Besucher-Avatar zeichnen
@@ -2236,23 +2253,53 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
     }
   }, []);
 
-  // Render-Loop
+  // Draw-Funktionen immer aktuell halten (werden bei gameState-Änderungen neu erstellt,
+  // aber der Render-Loop liest sie per Ref → kein RAF-Neustart nötig)
+  drawFnsRef.current = {
+    getCameraOffset, getScale, drawTile, drawPlayer, drawBuildings,
+    drawGrowingTree, drawDroppedSeeds, drawWeeds, drawPlantedTrees,
+    drawAnimals, drawPlacementGhost, drawWeather, drawExitMarkers,
+    drawVisitor, drawHostAvatar,
+  };
+
+  // Render-Loop: Startet nur einmal und liest alles aus Refs.
+  // Vorher wurde der Loop bei jedem gameState-Update (jede Sekunde) komplett
+  // abgebrochen und neu gestartet → Frame-Drops und Stottern.
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !gameState) return;
+    if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
+    let lastW = 0, lastH = 0;
 
     const render = () => {
-      canvas.width = canvasSize.width;
-      canvas.height = canvasSize.height;
+      const state = gameStateRef.current;
+      if (!state) {
+        animFrame.current = requestAnimationFrame(render);
+        return;
+      }
 
-      const camera = getCameraOffset();
-      const scale = getScale();
+      const fns = drawFnsRef.current;
+      const vm = visitModeRef.current;
+
+      // Canvas-Größe nur setzen wenn nötig (reset löscht GPU-Buffer)
+      const w = canvasSize.width;
+      const h = canvasSize.height;
+      if (lastW !== w || lastH !== h) {
+        canvas.width = w;
+        canvas.height = h;
+        lastW = w;
+        lastH = h;
+      } else {
+        ctx.clearRect(0, 0, w, h);
+      }
+
+      const camera = fns.getCameraOffset();
+      const scale = fns.getScale();
 
       // Hintergrund
       ctx.fillStyle = '#1a1a2e';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillRect(0, 0, w, h);
 
       // Skalierung anwenden
       ctx.save();
@@ -2263,55 +2310,55 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
       const zeroCamera = { x: 0, y: 0 };
       for (let row = 0; row < MAP_ROWS; row++) {
         for (let col = 0; col < MAP_COLS; col++) {
-          drawTile(ctx, col, row, homeMap[row][col], zeroCamera);
+          fns.drawTile(ctx, col, row, homeMap[row][col], zeroCamera);
         }
       }
 
       // Gebäude
-      drawBuildings(ctx, zeroCamera);
+      fns.drawBuildings(ctx, zeroCamera);
 
       // Wachsender Baum
-      drawGrowingTree(ctx, zeroCamera);
+      fns.drawGrowingTree(ctx, zeroCamera);
 
       // Abgeworfene Samen
-      drawDroppedSeeds(ctx, zeroCamera);
+      fns.drawDroppedSeeds(ctx, zeroCamera);
 
       // Unkraut
-      drawWeeds(ctx, zeroCamera);
+      fns.drawWeeds(ctx, zeroCamera);
 
       // Gepflanzte Bäume
-      drawPlantedTrees(ctx, zeroCamera);
+      fns.drawPlantedTrees(ctx, zeroCamera);
 
       // Tiere
-      drawAnimals(ctx, zeroCamera);
+      fns.drawAnimals(ctx, zeroCamera);
 
       // Ghost-Vorschau (Platzierungsmodus)
-      drawPlacementGhost(ctx, zeroCamera);
+      fns.drawPlacementGhost(ctx, zeroCamera);
 
       // Spieler (nur wenn nicht auf Sammelreise)
-      if (!gameState.gathering) {
-        drawPlayer(ctx, zeroCamera);
+      if (!state.gathering) {
+        fns.drawPlayer(ctx, zeroCamera);
       }
 
       // Besucher-Avatar (Host sieht Besucher)
-      if (visitMode === 'host') {
-        drawVisitor(ctx, zeroCamera);
+      if (vm === 'host') {
+        fns.drawVisitor(ctx, zeroCamera);
       }
 
       // Host-Avatar (Besucher sieht Host)
-      if (visitMode === 'visitor') {
-        drawHostAvatar(ctx, zeroCamera);
+      if (vm === 'visitor') {
+        fns.drawHostAvatar(ctx, zeroCamera);
       }
 
       // Ausgangs-Markierungen (nicht im Besucher-Modus)
-      if (visitMode !== 'visitor') {
-        drawExitMarkers(ctx, zeroCamera);
+      if (vm !== 'visitor') {
+        fns.drawExitMarkers(ctx, zeroCamera);
       }
 
       ctx.restore();
 
       // Wetter-Overlay (nicht skaliert, läuft über ganzen Viewport)
-      drawWeather(ctx, canvas.width, canvas.height);
+      fns.drawWeather(ctx, w, h);
 
       animFrame.current = requestAnimationFrame(render);
     };
@@ -2323,7 +2370,7 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
         cancelAnimationFrame(animFrame.current);
       }
     };
-  }, [gameState, canvasSize, placementGhost, getCameraOffset, getScale, drawTile, drawPlayer, drawBuildings, drawGrowingTree, drawDroppedSeeds, drawWeeds, drawPlantedTrees, drawAnimals, drawPlacementGhost, drawWeather, drawExitMarkers, drawVisitor, drawHostAvatar, visitMode]);
+  }, [canvasSize]);
 
   // Screen-Koordinaten → Welt-Koordinaten (mit Skalierung)
   const screenToWorld = useCallback((screenX, screenY) => {

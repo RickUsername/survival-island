@@ -29,6 +29,13 @@ export function getWeatherForDate(date = new Date()) {
     hash |= 0;
   }
 
+  // Avalanche-Mixing: Kleine Änderungen im Input → große Änderungen im Output
+  // Ohne dieses Mixing erzeugt z.B. "2026-1-20" → "2026-1-21" nur +1 im Hash,
+  // was zu langen Regen-/Sonnensträhnen führt.
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x45d9f3b);
+  hash ^= hash >>> 16;
+
   // 30% Chance auf Regen (hält dann bis 18:00 nächsten Tag)
   return Math.abs(hash) % 100 < 30 ? WEATHER_TYPES.RAINY : WEATHER_TYPES.SUNNY;
 }
