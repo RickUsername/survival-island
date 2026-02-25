@@ -18,6 +18,7 @@ import CheatConsole from './CheatConsole';
 import CheatListDialog from './CheatListDialog';
 import DiaryPanel from './DiaryPanel';
 import AchievementsPanel from './AchievementsPanel';
+import StatsPanel from './StatsPanel';
 import AchievementToast from './AchievementToast';
 import DemolishDialog from './DemolishDialog';
 import AnimalInfoDialog from './AnimalInfoDialog';
@@ -72,6 +73,7 @@ export default function Game() {
   const [showCheatList, setShowCheatList] = useState(false);
   const [showDiary, setShowDiary] = useState(false);
   const [showAchievements, setShowAchievements] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const [achievementToast, setAchievementToast] = useState(null);
   const [biomePrompt, setBiomePrompt] = useState(null);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
@@ -1709,7 +1711,7 @@ export default function Game() {
                 style={styles.bottomBarToggle}
                 onClick={() => setToolbarExpanded(!toolbarExpanded)}
               >
-                <span style={{ fontSize: '16px' }}>🎒🔨📖🏆{user ? '👥' : ''}{isAdmin ? '🔧' : ''}</span>
+                <span style={{ fontSize: '16px' }}>🎒🔨📖🏆📊{user ? '👥' : ''}{isAdmin ? '🔧' : ''}</span>
                 <span style={styles.toggleArrow}>{toolbarExpanded ? '▼' : '▲'}</span>
               </div>
               {toolbarExpanded && (
@@ -1745,6 +1747,13 @@ export default function Game() {
                     <span style={styles.btnIcon}>🏆</span>
                     <span style={styles.btnLabel}>Erfolge</span>
                     <span style={styles.btnHint}>[E]</span>
+                  </button>
+                  <button
+                    style={{ ...styles.actionBtn, borderColor: 'rgba(93,173,226,0.4)' }}
+                    onClick={() => setShowStats(true)}
+                  >
+                    <span style={styles.btnIcon}>📊</span>
+                    <span style={styles.btnLabel}>Statistik</span>
                   </button>
                   {user && (
                     <button
@@ -1839,6 +1848,14 @@ export default function Game() {
         <AchievementsPanel
           achievements={gameState.achievements}
           onClose={() => setShowAchievements(false)}
+        />
+      )}
+
+      {/* Statistiken */}
+      {showStats && (
+        <StatsPanel
+          gameState={gameState}
+          onClose={() => setShowStats(false)}
         />
       )}
 
