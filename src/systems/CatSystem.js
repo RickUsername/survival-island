@@ -9,8 +9,8 @@ import { TILE_SIZE, MAP_COLS, MAP_ROWS, TILE_TYPES } from '../utils/constants';
 export const EGG_HATCH_TIME = 2 * 24 * 60 * 60 * 1000;   // 2 Echtzeit-Tage (ms)
 export const CAT_ADULT_AGE = 365;                           // Tage bis erwachsen
 export const CAT_AFFECTION_MAX = 100;
-export const CAT_AFFECTION_DRAIN_PER_DAY = 30;
-export const CAT_AFFECTION_DRAIN_PER_SEC = 30 / (24 * 60 * 60); // ~0.000347/sec
+export const CAT_AFFECTION_DRAIN_PER_DAY = 15;
+export const CAT_AFFECTION_DRAIN_PER_SEC = 15 / (24 * 60 * 60); // ~0.000174/sec
 export const CAT_PET_COOLDOWN = 5 * 60 * 1000;             // 5 Minuten (ms)
 export const CAT_PET_AFFECTION_GAIN = 10;
 
