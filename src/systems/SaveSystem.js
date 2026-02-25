@@ -100,6 +100,7 @@ export function getDefaultGameState() {
       totalItemsCollected: 0,
       hasMainTreeFelled: false,
       hasCookedMeal: false,
+      totalDeaths: 0,
     },
 
     // Errungenschaften - überleben den Tod
@@ -225,6 +226,9 @@ export function loadGame(userId) {
     if (gameState.stats.hasCookedMeal === undefined) {
       gameState.stats.hasCookedMeal = false;
     }
+    if (gameState.stats.totalDeaths === undefined) {
+      gameState.stats.totalDeaths = 0;
+    }
 
     // Migration: Tier-Hunger ergänzen (alte Tiere ohne hunger-Feld)
     if (gameState.animals && gameState.animals.length > 0) {
@@ -297,8 +301,8 @@ export function resetGame(userId) {
   // Errungenschaften beibehalten
   const achievementsData = oldState?.achievements || { unlockedIds: [], lastUnlocked: null, lastUnlockedAt: null };
 
-  // Besuchs-Ei-Tracker beibehalten (überlebt den Tod)
-  const eggReceivedFrom = oldState?.eggReceivedFrom || [];
+  // Tode zählen (überlebt den Tod)
+  const totalDeaths = (oldState?.stats?.totalDeaths || 0) + 1;
 
   const newState = getDefaultGameState();
 
@@ -314,7 +318,8 @@ export function resetGame(userId) {
     activeTopicId: null,
   };
   newState.achievements = achievementsData;
-  newState.eggReceivedFrom = eggReceivedFrom;
+  newState.stats.totalDeaths = totalDeaths;
+  // eggReceivedFrom wird zurückgesetzt → nach dem Tod kann man erneut Eier erhalten
 
   saveGame(newState, userId);
   return newState;
@@ -406,6 +411,7 @@ function applyMigrations(gameState) {
   if (!gs.stats) gs.stats = { daysAlive: 0, startedAt: Date.now(), totalGatheringTrips: 0, totalItemsCollected: 0, hasMainTreeFelled: false, hasCookedMeal: false };
   if (gs.stats.hasMainTreeFelled === undefined) gs.stats.hasMainTreeFelled = false;
   if (gs.stats.hasCookedMeal === undefined) gs.stats.hasCookedMeal = false;
+  if (gs.stats.totalDeaths === undefined) gs.stats.totalDeaths = 0;
   if (!gs.vacation) gs.vacation = { isActive: false, activatedAt: null, usedHoursThisYear: 0, currentYear: new Date().getFullYear() };
 
   // Tier-Migrationen

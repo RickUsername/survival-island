@@ -14,9 +14,9 @@ export const PLAYER_SIZE = 40;
 export const PLAYER_SPEED = 3;
 
 // --- Bedürfnisse (Zeiten in Millisekunden) ---
-export const HUNGER_DRAIN_TIME = 72 * 60 * 60 * 1000;   // 3 Tage bis 0%
-export const THIRST_DRAIN_TIME = 48 * 60 * 60 * 1000;   // 2 Tage bis 0%
-export const MOOD_DRAIN_TIME = 48 * 60 * 60 * 1000;     // 2 Tage bis 0%
+export const HUNGER_DRAIN_TIME = 144 * 60 * 60 * 1000;  // 6 Tage bis 0%
+export const THIRST_DRAIN_TIME = 96 * 60 * 60 * 1000;   // 4 Tage bis 0%
+export const MOOD_DRAIN_TIME = 96 * 60 * 60 * 1000;     // 4 Tage bis 0%
 
 // Bedürfnis-Abnahme pro Sekunde (Prozentpunkte)
 export const HUNGER_DRAIN_PER_SEC = 100 / (HUNGER_DRAIN_TIME / 1000);

@@ -37,6 +37,7 @@ export default function DeathScreen({ cause, onRestart }) {
         <p style={styles.resetInfo}>
           Dein Spielstand wird zurückgesetzt.
           Urlaubstage, Tagebuch und Errungenschaften bleiben erhalten.
+          Du kannst erneut Katzeneier von Freunden erhalten.
         </p>
 
         <button style={styles.restartBtn} onClick={onRestart}>

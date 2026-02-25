@@ -16,8 +16,8 @@ export const ANIMAL_TYPES = {
 
 // Hunger-Konfiguration
 export const ANIMAL_HUNGER_MAX = 100;
-// 1 Obst pro Tag = 100 Hunger pro 24h = ~0.00116 pro Sekunde
-const ANIMAL_HUNGER_DRAIN_PER_SEC = 100 / (24 * 60 * 60);
+// 1 Obst pro 3 Tage = 100 Hunger pro 72h = ~0.00039 pro Sekunde
+const ANIMAL_HUNGER_DRAIN_PER_SEC = 100 / (72 * 60 * 60);
 
 // Baum-Obst-Abwurf Konfiguration
 const FRUIT_DROP_INTERVAL = 3 * 24 * 60 * 60 * 1000; // alle 3 echte Tage (ms)
