@@ -635,7 +635,8 @@ export default function useGameLoop() {
   // Spieler bewegen
   const movePlayer = useCallback((dx, dy) => {
     setGameState(prev => {
-      if (!prev || prev.gathering || prev.vacation.isActive) return prev;
+      // Urlaub blockiert Bewegung NICHT — Spieler darf wandern, um sich zu helfen
+      if (!prev || prev.gathering) return prev;
 
       const newX = prev.player.x + dx;
       const newY = prev.player.y + dy;
@@ -660,7 +661,8 @@ export default function useGameLoop() {
   // Klick-Bewegung (Punkt-und-Klick)
   const movePlayerTo = useCallback((targetX, targetY) => {
     setGameState(prev => {
-      if (!prev || prev.gathering || prev.vacation.isActive) return prev;
+      // Urlaub blockiert Bewegung NICHT — Spieler darf wandern, um sich zu helfen
+      if (!prev || prev.gathering) return prev;
 
       const col = Math.floor(targetX / TILE_SIZE);
       const row = Math.floor(targetY / TILE_SIZE);

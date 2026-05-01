@@ -479,7 +479,9 @@ export default function Game() {
   useEffect(() => {
     moveInterval.current = setInterval(() => {
       const gs = gameStateRef.current;
-      if (!gs || gs.gathering || gs.hobby || gs.vacation.isActive) return;
+      // Urlaub blockiert NICHT mehr — Spieler darf wandern, um sich
+      // selbst zu helfen (Sammelreise starten falls Bedürfnisse kritisch).
+      if (!gs || gs.gathering || gs.hobby) return;
 
       setGameState(prev => {
         if (!prev || prev.gathering || prev.hobby) return prev;
@@ -924,7 +926,9 @@ export default function Game() {
 
   // Touch-Steuerung (Klick auf Karte)
   const handleMapClick = useCallback((worldX, worldY) => {
-    if (!gameState || gameState.gathering || gameState.hobby || gameState.vacation.isActive) return;
+    // Urlaub blockiert NICHT — Spieler darf während des Urlaubs wandern
+    // und Sammelreisen starten (Notversorgung wenn Auto-Urlaub aktiv).
+    if (!gameState || gameState.gathering || gameState.hobby) return;
     if (showInventory || showCrafting || biomePrompt || demolishConfirm || animalInfo || catInfo || treeFellConfirm) return;
 
     const isVisitor = mp?.activeVisit?.role === 'visitor';
@@ -1521,21 +1525,10 @@ export default function Game() {
 
   // Urlaub ändern
   const handleVacationChange = useCallback((newVacation) => {
-    setGameState(prev => {
-      // Urlaub wird beendet: Falls ein Bedürfnis kritisch ist (< 10%),
-      // auf 100% setzen, damit der Charakter nicht sofort wieder im
-      // Auto-Urlaub landet (10% reicht nicht — Hunger sinkt schnell wieder
-      // unter die Schwelle und löst Auto-Urlaub erneut aus → Endlos-Schleife).
-      let needs = prev.needs;
-      if (!newVacation.isActive && prev.vacation.isActive) {
-        const needsFixed = { ...needs };
-        if (needsFixed.hunger < 10) needsFixed.hunger = 100;
-        if (needsFixed.thirst < 10) needsFixed.thirst = 100;
-        if (needsFixed.mood < 10) needsFixed.mood = 100;
-        needs = needsFixed;
-      }
-      return { ...prev, vacation: newVacation, needs };
-    });
+    setGameState(prev => ({
+      ...prev,
+      vacation: newVacation,
+    }));
   }, [setGameState]);
 
   // Crafting-Ergebnis anwenden
@@ -2015,7 +2008,7 @@ export default function Game() {
           {/* Urlaub-Banner */}
           {gameState.vacation.isActive && (
             <div style={styles.vacationBanner}>
-              🏖️ URLAUBSMODUS AKTIV - Alle Bedürfnisse pausiert
+              🏖️ URLAUBSMODUS AKTIV - Bedürfnisse pausiert (Wandern & Sammeln möglich)
             </div>
           )}
         </>
