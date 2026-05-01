@@ -210,6 +210,18 @@ export default function useGameLoop() {
         const moodModifier = state.weather === WEATHER_TYPES.RAINY ? shelterMod.rain : shelterMod.sun;
         needs.mood = Math.max(0, needs.mood - MOOD_DRAIN_PER_SEC * moodModifier * afterGatheringSec);
         state.needs = needs;
+      } else if (state.hobby) {
+        // Hobby war aktiv: Hunger/Durst laufen normal, Mood pausiert (gleiche Logik wie Sammelreise)
+        const totalOfflineSec = (Date.now() - state.lastUpdate) / 1000;
+        const needs = { ...state.needs };
+        needs.hunger = Math.max(0, needs.hunger - HUNGER_DRAIN_PER_SEC * totalOfflineSec);
+        if (isWaterCollectorActive(state.buildings)) {
+          needs.thirst = Math.min(100, needs.thirst + (5 / 3600) * totalOfflineSec);
+        } else {
+          needs.thirst = Math.max(0, needs.thirst - THIRST_DRAIN_PER_SEC * totalOfflineSec);
+        }
+        // Mood bleibt unverändert während Hobby
+        state.needs = needs;
       } else {
         state.needs = calculateOfflineNeeds(state);
       }

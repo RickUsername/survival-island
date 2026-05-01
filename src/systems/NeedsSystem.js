@@ -62,7 +62,10 @@ export function updateNeeds(gameState, deltaSeconds) {
     needs.thirst = Math.max(0, needs.thirst - THIRST_DRAIN_PER_SEC * deltaSeconds);
   }
 
-  needs.mood = Math.max(0, needs.mood - MOOD_DRAIN_PER_SEC * moodModifier * deltaSeconds);
+  // Während aktivem Hobby: Stimmung sinkt nicht (Belohnung kommt am Ende)
+  if (!gameState.hobby) {
+    needs.mood = Math.max(0, needs.mood - MOOD_DRAIN_PER_SEC * moodModifier * deltaSeconds);
+  }
 
   return needs;
 }

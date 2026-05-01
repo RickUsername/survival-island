@@ -95,6 +95,15 @@ export function getDefaultGameState() {
       activeTopicId: null,
     },
 
+    // Aktive Hobby-Session (null = nicht aktiv)
+    // { startTime, pausedAt, totalPausedMs, projectId, status }
+    hobby: null,
+
+    // Hobby-Tagebuch (Strick-/Hobbyprojekte) - überlebt den Tod
+    hobbyDiary: {
+      projects: [],      // [{ id, name, totalTimeMs, createdAt }]
+    },
+
     // Statistiken
     stats: {
       daysAlive: 0,
@@ -215,6 +224,10 @@ export function loadGame(userId) {
       gameState.diary = { topics: [], activeTopicId: null };
     }
 
+    // Migration: Hobby-System ergänzen
+    if (gameState.hobby === undefined) gameState.hobby = null;
+    if (!gameState.hobbyDiary) gameState.hobbyDiary = { projects: [] };
+
     // Migration: Errungenschaften ergänzen
     if (!gameState.achievements) {
       gameState.achievements = { unlockedIds: [], lastUnlocked: null, lastUnlockedAt: null };
@@ -304,6 +317,9 @@ export function resetGame(userId) {
   // Tagebuch beibehalten
   const diaryData = oldState?.diary || { topics: [], activeTopicId: null };
 
+  // Hobby-Tagebuch beibehalten
+  const hobbyDiaryData = oldState?.hobbyDiary || { projects: [] };
+
   // Errungenschaften beibehalten
   const achievementsData = oldState?.achievements || { unlockedIds: [], lastUnlocked: null, lastUnlockedAt: null };
 
@@ -323,6 +339,8 @@ export function resetGame(userId) {
     ...diaryData,
     activeTopicId: null,
   };
+  newState.hobbyDiary = hobbyDiaryData;
+  newState.hobby = null;
   newState.achievements = achievementsData;
   newState.stats.totalDeaths = totalDeaths;
   // eggReceivedFrom wird zurückgesetzt → nach dem Tod kann man erneut Eier erhalten
@@ -413,6 +431,8 @@ function applyMigrations(gameState) {
   if (gs.lastWeedSpawn === undefined) gs.lastWeedSpawn = null;
   if (!gs.placedFlowers) gs.placedFlowers = [];
   if (!gs.diary) gs.diary = { topics: [], activeTopicId: null };
+  if (gs.hobby === undefined) gs.hobby = null;
+  if (!gs.hobbyDiary) gs.hobbyDiary = { projects: [] };
   if (!gs.achievements) gs.achievements = { unlockedIds: [], lastUnlocked: null, lastUnlockedAt: null };
   if (!gs.eggReceivedFrom) gs.eggReceivedFrom = [];
   if (!gs.stats) gs.stats = { daysAlive: 0, startedAt: Date.now(), totalGatheringTrips: 0, totalItemsCollected: 0, hasMainTreeFelled: false, hasCookedMeal: false };

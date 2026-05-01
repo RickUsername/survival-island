@@ -12,6 +12,8 @@ import InventoryPanel from './InventoryPanel';
 import CraftingPanel from './CraftingPanel';
 import ShopPanel from './ShopPanel';
 import GatheringScreen from './GatheringScreen';
+import HobbyPanel from './HobbyPanel';
+import HobbyScreen from './HobbyScreen';
 import LootScreen from './LootScreen';
 import DeathScreen from './DeathScreen';
 import BiomePrompt from './BiomePrompt';
@@ -41,6 +43,13 @@ import {
   resumeGathering,
   finishGathering,
 } from '../systems/GatheringSystem';
+import {
+  startHobby,
+  pauseHobby,
+  resumeHobby,
+  finishHobby,
+  createHobbyProject,
+} from '../systems/HobbySystem';
 import { drainToolDurability, hasToolOfTier, getBestTool } from '../systems/ToolSystem';
 import { checkAnimalSpawn, createAnimal, getRandomGrassPosition, ANIMAL_TYPES, feedAnimal, createChicken } from '../systems/AnimalSystem';
 import { createCat, petCat, feedCat, canPetCat } from '../systems/CatSystem';
@@ -71,6 +80,7 @@ export default function Game() {
   const [showInventory, setShowInventory] = useState(false);
   const [showCrafting, setShowCrafting] = useState(false);
   const [showShop, setShowShop] = useState(false);
+  const [showHobby, setShowHobby] = useState(false);
   const [showCheats, setShowCheats] = useState(false);
   const [showCheatList, setShowCheatList] = useState(false);
   const [showDiary, setShowDiary] = useState(false);
@@ -444,6 +454,7 @@ export default function Game() {
         if (key === 'i') setShowInventory(v => !v);
         if (key === 'c') setShowCrafting(v => !v);
         if (key === 's') setShowShop(v => !v);
+        if (key === 'h') setShowHobby(v => !v);
         if (key === 't') setShowDiary(v => !v);
         if (key === 'e') setShowAchievements(v => !v);
         if (key === 'f' && user) setShowFriends(v => !v);
@@ -468,10 +479,10 @@ export default function Game() {
   useEffect(() => {
     moveInterval.current = setInterval(() => {
       const gs = gameStateRef.current;
-      if (!gs || gs.gathering || gs.vacation.isActive) return;
+      if (!gs || gs.gathering || gs.hobby || gs.vacation.isActive) return;
 
       setGameState(prev => {
-        if (!prev || prev.gathering) return prev;
+        if (!prev || prev.gathering || prev.hobby) return prev;
 
         let dx = 0;
         let dy = 0;
@@ -821,6 +832,73 @@ export default function Game() {
     setTimeout(() => manualSave(), 0);
   }, [setGameState, manualSave]);
 
+  // --- Hobby ---
+
+  // Hobby-Projekt anlegen
+  const handleAddHobbyProject = useCallback((name) => {
+    setGameState(prev => {
+      const newProject = createHobbyProject(name);
+      const projects = [...((prev.hobbyDiary?.projects) || []), newProject];
+      return { ...prev, hobbyDiary: { ...(prev.hobbyDiary || {}), projects } };
+    });
+    setTimeout(() => manualSave(), 0);
+  }, [setGameState, manualSave]);
+
+  // Hobby-Projekt löschen
+  const handleDeleteHobbyProject = useCallback((projectId) => {
+    setGameState(prev => {
+      const projects = ((prev.hobbyDiary?.projects) || []).filter(p => p.id !== projectId);
+      return { ...prev, hobbyDiary: { ...(prev.hobbyDiary || {}), projects } };
+    });
+    setTimeout(() => manualSave(), 0);
+  }, [setGameState, manualSave]);
+
+  // Hobby-Session starten (projectId optional, null = ohne Projekt)
+  const handleStartHobby = useCallback((projectId = null) => {
+    setGameState(prev => ({ ...prev, hobby: startHobby(projectId) }));
+    setShowHobby(false);
+    setTimeout(() => manualSave(), 0);
+  }, [setGameState, manualSave]);
+
+  // Hobby pausieren
+  const handlePauseHobby = useCallback(() => {
+    setGameState(prev => ({ ...prev, hobby: pauseHobby(prev.hobby) }));
+  }, [setGameState]);
+
+  // Hobby fortsetzen
+  const handleResumeHobby = useCallback(() => {
+    setGameState(prev => ({ ...prev, hobby: resumeHobby(prev.hobby) }));
+  }, [setGameState]);
+
+  // Hobby beenden -> Stimmung gutschreiben + Projekt-Zeit aktualisieren
+  const handleFinishHobby = useCallback(() => {
+    setGameState(prev => {
+      if (!prev.hobby) return prev;
+      const result = finishHobby(prev.hobby);
+
+      // Stimmung dazu (cap 100)
+      const newNeeds = { ...prev.needs };
+      newNeeds.mood = Math.min(100, newNeeds.mood + result.moodGain);
+
+      // Projekt-Zeit aktualisieren falls Projekt aktiv
+      let newHobbyDiary = prev.hobbyDiary || { projects: [] };
+      if (result.projectId && newHobbyDiary.projects) {
+        newHobbyDiary = {
+          ...newHobbyDiary,
+          projects: newHobbyDiary.projects.map(p =>
+            p.id === result.projectId
+              ? { ...p, totalTimeMs: p.totalTimeMs + result.duration }
+              : p
+          ),
+        };
+      }
+
+      return { ...prev, hobby: null, needs: newNeeds, hobbyDiary: newHobbyDiary };
+    });
+
+    setTimeout(() => { manualSave(); checkAndApplyAchievements(); }, 0);
+  }, [setGameState, manualSave, checkAndApplyAchievements]);
+
   // --- Multiplayer: Trade abschliessen (beide Seiten) ---
   const handleTradeComplete = useCallback((trade) => {
     if (!mp) return;
@@ -846,12 +924,23 @@ export default function Game() {
 
   // Touch-Steuerung (Klick auf Karte)
   const handleMapClick = useCallback((worldX, worldY) => {
-    if (!gameState || gameState.gathering || gameState.vacation.isActive) return;
+    if (!gameState || gameState.gathering || gameState.hobby || gameState.vacation.isActive) return;
     if (showInventory || showCrafting || biomePrompt || demolishConfirm || animalInfo || catInfo || treeFellConfirm) return;
 
     const isVisitor = mp?.activeVisit?.role === 'visitor';
     const col = Math.floor(worldX / TILE_SIZE);
     const row = Math.floor(worldY / TILE_SIZE);
+
+    // Klick auf eigene Spielerfigur -> Hobby-Panel öffnen (nicht im Platzierungsmodus, nicht als Besucher)
+    if (!placementMode && !isVisitor) {
+      const dx = worldX - gameState.player.x;
+      const dy = worldY - gameState.player.y;
+      const distSq = dx * dx + dy * dy;
+      if (distSq < 25 * 25) {
+        setShowHobby(true);
+        return;
+      }
+    }
 
     // Im Platzierungsmodus: Gebäude, Baum oder Blume platzieren (nicht als Besucher)
     if (placementMode && !isVisitor) {
@@ -1698,7 +1787,7 @@ export default function Game() {
   return (
     <div style={styles.gameContainer}>
       {/* Spielfeld */}
-      {!gameState.gathering && (
+      {!gameState.gathering && !gameState.hobby && (
         <GameCanvas
           gameState={gameState}
           onMapClick={handleMapClick}
@@ -1728,8 +1817,24 @@ export default function Game() {
         />
       )}
 
+      {/* Hobby-Bildschirm */}
+      {gameState.hobby && !gameState.gathering && (
+        <HobbyScreen
+          hobby={gameState.hobby}
+          needs={gameState.needs}
+          activeProjectName={
+            gameState.hobby?.projectId
+              ? gameState.hobbyDiary?.projects?.find(p => p.id === gameState.hobby.projectId)?.name
+              : null
+          }
+          onPause={handlePauseHobby}
+          onResume={handleResumeHobby}
+          onCancel={handleFinishHobby}
+        />
+      )}
+
       {/* UI-Overlay (nur auf Heimat-Map) */}
-      {!gameState.gathering && (
+      {!gameState.gathering && !gameState.hobby && (
         <>
           {/* Obere Leiste */}
           <div style={{ ...styles.topBar, top: safeArea.top }}>
@@ -1841,6 +1946,14 @@ export default function Game() {
                     <span style={styles.btnHint}>[S]</span>
                   </button>
                   <button
+                    style={{ ...styles.actionBtn, borderColor: 'rgba(176, 126, 204, 0.4)' }}
+                    onClick={() => setShowHobby(true)}
+                  >
+                    <span style={styles.btnIcon}>🧶</span>
+                    <span style={styles.btnLabel}>Hobby</span>
+                    <span style={styles.btnHint}>[H]</span>
+                  </button>
+                  <button
                     style={{ ...styles.actionBtn, borderColor: 'rgba(139,115,85,0.4)' }}
                     onClick={() => setShowDiary(true)}
                   >
@@ -1933,6 +2046,17 @@ export default function Game() {
           inventory={gameState.inventory}
           onPurchase={(offer) => { handleShopPurchase(offer); }}
           onClose={() => setShowShop(false)}
+        />
+      )}
+
+      {/* Hobby-Tagebuch */}
+      {showHobby && (
+        <HobbyPanel
+          hobbyDiary={gameState.hobbyDiary}
+          onAddProject={handleAddHobbyProject}
+          onDeleteProject={handleDeleteHobbyProject}
+          onStartHobby={handleStartHobby}
+          onClose={() => setShowHobby(false)}
         />
       )}
 
