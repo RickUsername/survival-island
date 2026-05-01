@@ -1522,15 +1522,16 @@ export default function Game() {
   // Urlaub ändern
   const handleVacationChange = useCallback((newVacation) => {
     setGameState(prev => {
-      // Urlaub wird beendet: Falls Hunger oder Durst bei 0% steht,
-      // auf 10% anheben damit der Charakter nicht sofort stirbt.
-      // (Dieser Sonderfall tritt nur auf wenn jemand durch eine Umstellung
-      // mit 0% in den Urlaubsmodus geraten ist und ihn jetzt verlassen will.)
+      // Urlaub wird beendet: Falls ein Bedürfnis kritisch ist (< 10%),
+      // auf 100% setzen, damit der Charakter nicht sofort wieder im
+      // Auto-Urlaub landet (10% reicht nicht — Hunger sinkt schnell wieder
+      // unter die Schwelle und löst Auto-Urlaub erneut aus → Endlos-Schleife).
       let needs = prev.needs;
       if (!newVacation.isActive && prev.vacation.isActive) {
         const needsFixed = { ...needs };
-        if (needsFixed.hunger <= 0) needsFixed.hunger = 10;
-        if (needsFixed.thirst <= 0) needsFixed.thirst = 10;
+        if (needsFixed.hunger < 10) needsFixed.hunger = 100;
+        if (needsFixed.thirst < 10) needsFixed.thirst = 100;
+        if (needsFixed.mood < 10) needsFixed.mood = 100;
         needs = needsFixed;
       }
       return { ...prev, vacation: newVacation, needs };
