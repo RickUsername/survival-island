@@ -294,6 +294,123 @@ const items = {
     plantable: true,
   },
 
+  // --- Blumensamen (8 Sorten — kaufbar im Shop) ---
+  // flowerType: Schlüssel für Render-Logik in GameCanvas + FLOWER_TYPES
+  sunflower_seed: {
+    id: 'sunflower_seed',
+    name: 'Sonnenblumensamen',
+    category: 'special',
+    color: '#F5C033',
+    description: 'Wächst zu einer hohen Sonnenblume — so groß wie eine Person.',
+    plantable: true,
+    flowerSeed: true,
+    flowerType: 'sunflower',
+  },
+  rose_seed: {
+    id: 'rose_seed',
+    name: 'Rosensamen',
+    category: 'special',
+    color: '#C92B4D',
+    description: 'Eine duftende rote Rose, halb so hoch wie eine Person.',
+    plantable: true,
+    flowerSeed: true,
+    flowerType: 'rose',
+  },
+  tulip_seed: {
+    id: 'tulip_seed',
+    name: 'Tulpensamen',
+    category: 'special',
+    color: '#E8546C',
+    description: 'Bunte Tulpen, halb so hoch wie eine Person.',
+    plantable: true,
+    flowerSeed: true,
+    flowerType: 'tulip',
+  },
+  daisy_seed: {
+    id: 'daisy_seed',
+    name: 'Margeritensamen',
+    category: 'special',
+    color: '#FFFFFF',
+    description: 'Weiße Margeriten, halb so hoch wie eine Person.',
+    plantable: true,
+    flowerSeed: true,
+    flowerType: 'daisy',
+  },
+  lavender_seed: {
+    id: 'lavender_seed',
+    name: 'Lavendelsamen',
+    category: 'special',
+    color: '#9b6dd6',
+    description: 'Lila Lavendelblüten, halb so hoch wie eine Person.',
+    plantable: true,
+    flowerSeed: true,
+    flowerType: 'lavender',
+  },
+  poppy_seed: {
+    id: 'poppy_seed',
+    name: 'Mohnsamen',
+    category: 'special',
+    color: '#E03030',
+    description: 'Leuchtend rote Mohnblumen, halb so hoch wie eine Person.',
+    plantable: true,
+    flowerSeed: true,
+    flowerType: 'poppy',
+  },
+  marigold_seed: {
+    id: 'marigold_seed',
+    name: 'Ringelblumensamen',
+    category: 'special',
+    color: '#F58220',
+    description: 'Orange Ringelblumen, halb so hoch wie eine Person.',
+    plantable: true,
+    flowerSeed: true,
+    flowerType: 'marigold',
+  },
+  lily_seed: {
+    id: 'lily_seed',
+    name: 'Liliensamen',
+    category: 'special',
+    color: '#FFE680',
+    description: 'Elegante Lilien, halb so hoch wie eine Person.',
+    plantable: true,
+    flowerSeed: true,
+    flowerType: 'lily',
+  },
+
+  // --- Brille (verdoppelt Sammelfunde) ---
+  goggles: {
+    id: 'goggles',
+    name: 'Späherbrille',
+    category: 'tool',
+    toolType: 'goggles',
+    tier: 'crystal',
+    durability: null, // Keine ablaufende Lebensdauer
+    color: '#7AC0E8',
+    description: 'Verdoppelt jedes Item, das auf einer Sammelreise gefunden wird. Hält ewig.',
+  },
+
+  // --- Hühner-Eier (essbar) ---
+  chicken_egg: {
+    id: 'chicken_egg',
+    name: 'Hühnerei',
+    category: 'food',
+    isRaw: true,
+    hungerValue: 8, // roh: 4, gekocht: voller Balken
+    color: '#F8E9C0',
+    description: 'Ein frisches Hühnerei. Kann gekocht werden — gekocht füllt es den Hunger komplett auf.',
+    spoilTime: 7 * 24 * 60 * 60 * 1000,
+  },
+  cooked_egg: {
+    id: 'cooked_egg',
+    name: 'Gekochtes Ei',
+    category: 'food',
+    isRaw: false,
+    hungerValue: 100, // füllt den Hungerbalken komplett auf
+    color: '#FFF1B0',
+    description: 'Ein gekochtes Ei. Füllt den Hungerbalken komplett auf!',
+    spoilTime: 7 * 24 * 60 * 60 * 1000,
+  },
+
   // --- Mysteriöses Ei (Katzen-System) ---
   mysterious_egg: {
     id: 'mysterious_egg',

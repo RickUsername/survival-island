@@ -198,6 +198,20 @@ const recipes = [
     description: 'Die beste Spitzhacke. Hält 2400 Min.',
   },
 
+  // --- Späherbrille (verdoppelt Sammelfunde, hält ewig) ---
+  {
+    id: 'goggles',
+    name: 'Späherbrille',
+    category: 'tool',
+    result: { type: 'tool', itemId: 'goggles' },
+    ingredients: [
+      { itemId: 'crystal', amount: 2 },
+      { itemId: 'wood', amount: 1 },
+    ],
+    requiresTool: null,
+    description: 'Verdoppelt jedes Item, das auf einer Sammelreise gefunden wird. Keine Abnutzung.',
+  },
+
   // --- Lagerfeuer ---
   {
     id: 'campfire',
@@ -245,6 +259,17 @@ const recipes = [
     ],
     requiresBuilding: 'campfire',
     description: 'Gebratene Pilze - lecker und nahrhaft.',
+  },
+  {
+    id: 'cooked_egg',
+    name: 'Gekochtes Ei',
+    category: 'food',
+    result: { type: 'food', itemId: 'cooked_egg' },
+    ingredients: [
+      { itemId: 'chicken_egg', amount: 1 },
+    ],
+    requiresBuilding: 'campfire',
+    description: 'Ein gekochtes Ei — füllt den Hungerbalken komplett auf.',
   },
   {
     id: 'fruit_salad',

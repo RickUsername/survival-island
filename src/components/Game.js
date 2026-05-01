@@ -10,6 +10,7 @@ import WeatherDisplay from './WeatherDisplay';
 import VacationButton from './VacationButton';
 import InventoryPanel from './InventoryPanel';
 import CraftingPanel from './CraftingPanel';
+import ShopPanel from './ShopPanel';
 import GatheringScreen from './GatheringScreen';
 import LootScreen from './LootScreen';
 import DeathScreen from './DeathScreen';
@@ -41,7 +42,7 @@ import {
   finishGathering,
 } from '../systems/GatheringSystem';
 import { drainToolDurability, hasToolOfTier, getBestTool } from '../systems/ToolSystem';
-import { checkAnimalSpawn, createAnimal, getRandomGrassPosition, ANIMAL_TYPES, feedAnimal } from '../systems/AnimalSystem';
+import { checkAnimalSpawn, createAnimal, getRandomGrassPosition, ANIMAL_TYPES, feedAnimal, createChicken } from '../systems/AnimalSystem';
 import { createCat, petCat, feedCat, canPetCat } from '../systems/CatSystem';
 import { checkAchievements, applyAchievements } from '../systems/AchievementSystem';
 import { useAuth } from '../contexts/AuthContext';
@@ -69,6 +70,7 @@ export default function Game() {
 
   const [showInventory, setShowInventory] = useState(false);
   const [showCrafting, setShowCrafting] = useState(false);
+  const [showShop, setShowShop] = useState(false);
   const [showCheats, setShowCheats] = useState(false);
   const [showCheatList, setShowCheatList] = useState(false);
   const [showDiary, setShowDiary] = useState(false);
@@ -441,6 +443,7 @@ export default function Game() {
       if (!placementMode) {
         if (key === 'i') setShowInventory(v => !v);
         if (key === 'c') setShowCrafting(v => !v);
+        if (key === 's') setShowShop(v => !v);
         if (key === 't') setShowDiary(v => !v);
         if (key === 'e') setShowAchievements(v => !v);
         if (key === 'f' && user) setShowFriends(v => !v);
@@ -720,10 +723,103 @@ export default function Game() {
   }, [gameState, isTileValidForPlacement, setGameState, manualSave, checkAndApplyAchievements]);
 
   // Pflanzen-Modus aktivieren (aus Inventar heraus)
-  const handleStartPlanting = useCallback(() => {
-    setPlacementMode({ type: 'tree_seed' });
+  // itemId: 'tree_seed' oder Blumensamen-ID (sunflower_seed, rose_seed, ...)
+  const handleStartPlanting = useCallback((itemId = 'tree_seed') => {
+    const itemDef = items[itemId];
+    if (!itemDef) return;
+    if (itemDef.flowerSeed) {
+      setPlacementMode({ type: 'flower_seed', itemId, flowerType: itemDef.flowerType });
+    } else {
+      setPlacementMode({ type: 'tree_seed' });
+    }
     setShowInventory(false);
   }, []);
+
+  // Blumensamen pflanzen (Klick im Pflanz-Modus)
+  const handlePlantFlower = useCallback((col, row) => {
+    if (!placementMode || placementMode.type !== 'flower_seed') return;
+    if (!isTileValidForPlacement(col, row)) return;
+
+    const hasFlower = (gameState?.placedFlowers || []).some(f => f.col === col && f.row === row);
+    if (hasFlower) return;
+    const hasTree = (gameState?.plantedTrees || []).some(t => t.col === col && t.row === row);
+    if (hasTree) return;
+    if (col === 3 && row === 3) return;
+
+    const seedItemId = placementMode.itemId;
+    const flowerType = placementMode.flowerType;
+
+    setGameState(prev => {
+      const newInventory = { ...prev.inventory };
+      if (!newInventory[seedItemId] || newInventory[seedItemId].amount <= 0) return prev;
+      newInventory[seedItemId] = {
+        ...newInventory[seedItemId],
+        amount: newInventory[seedItemId].amount - 1,
+      };
+      if (newInventory[seedItemId].amount <= 0) {
+        delete newInventory[seedItemId];
+      }
+
+      const newFlowers = [...(prev.placedFlowers || [])];
+      newFlowers.push({
+        id: `flower_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+        col,
+        row,
+        plantedAt: Date.now(),
+        flowerType,
+      });
+
+      return { ...prev, inventory: newInventory, placedFlowers: newFlowers };
+    });
+
+    setPlacementMode(null);
+    setPlacementGhost(null);
+    setTimeout(() => { manualSave(); }, 0);
+  }, [placementMode, gameState, isTileValidForPlacement, setGameState, manualSave]);
+
+  // Shop-Kauf
+  const handleShopPurchase = useCallback((offer) => {
+    setGameState(prev => {
+      const crystals = prev.inventory.crystal?.amount || 0;
+      if (crystals < offer.costCrystals) return prev;
+
+      // Kristalle abziehen
+      const newInventory = { ...prev.inventory };
+      newInventory.crystal = {
+        ...newInventory.crystal,
+        amount: crystals - offer.costCrystals,
+      };
+      if (newInventory.crystal.amount <= 0) delete newInventory.crystal;
+
+      let newAnimals = prev.animals || [];
+
+      if (offer.type === 'item') {
+        // Items ins Inventar
+        if (!newInventory[offer.itemId]) {
+          newInventory[offer.itemId] = { amount: 0, collectedAt: Date.now() };
+        }
+        newInventory[offer.itemId] = {
+          ...newInventory[offer.itemId],
+          amount: newInventory[offer.itemId].amount + offer.amount,
+        };
+      } else if (offer.type === 'chicken') {
+        // Erwachsenes Huhn spawnen
+        const pos = getRandomGrassPosition();
+        const chicken = createChicken(pos.x, pos.y);
+        newAnimals = [...newAnimals, chicken];
+      }
+
+      return { ...prev, inventory: newInventory, animals: newAnimals };
+    });
+
+    if (offer.type === 'chicken') {
+      setGameToast({ emoji: '🐔', message: 'Ein erwachsenes Huhn ist eingezogen! Es legt jeden Tag ein Ei.' });
+    } else {
+      setGameToast({ emoji: '🌱', message: `${offer.amount} Samen ins Inventar gelegt!` });
+    }
+
+    setTimeout(() => manualSave(), 0);
+  }, [setGameState, manualSave]);
 
   // --- Multiplayer: Trade abschliessen (beide Seiten) ---
   const handleTradeComplete = useCallback((trade) => {
@@ -757,10 +853,12 @@ export default function Game() {
     const col = Math.floor(worldX / TILE_SIZE);
     const row = Math.floor(worldY / TILE_SIZE);
 
-    // Im Platzierungsmodus: Gebäude oder Baum platzieren (nicht als Besucher)
+    // Im Platzierungsmodus: Gebäude, Baum oder Blume platzieren (nicht als Besucher)
     if (placementMode && !isVisitor) {
       if (placementMode.type === 'tree_seed') {
         handlePlantTree(col, row);
+      } else if (placementMode.type === 'flower_seed') {
+        handlePlantFlower(col, row);
       } else {
         handlePlaceBuilding(col, row);
       }
@@ -918,7 +1016,7 @@ export default function Game() {
         }));
       }
     }
-  }, [gameState, showInventory, showCrafting, biomePrompt, demolishConfirm, animalInfo, catInfo, treeFellConfirm, placementMode, setGameState, manualSave, checkExitAfterMove, handlePlaceBuilding, handlePlantTree, mp]);
+  }, [gameState, showInventory, showCrafting, biomePrompt, demolishConfirm, animalInfo, catInfo, treeFellConfirm, placementMode, setGameState, manualSave, checkExitAfterMove, handlePlaceBuilding, handlePlantTree, handlePlantFlower, mp]);
 
   // Baum faellen (Kristallaxt noetig)
   const handleFellTree = useCallback(() => {
@@ -1679,7 +1777,9 @@ export default function Game() {
           {placementMode && !placementConfirm && (
             <div style={{ ...styles.placementBanner, top: safeArea.top + 60 }}>
               {placementMode.type === 'tree_seed'
-                ? 'Klicke auf eine freie Grasfläche, um den Samen zu pflanzen!'
+                ? 'Klicke auf eine freie Grasfläche, um den Baumsamen zu pflanzen!'
+                : placementMode.type === 'flower_seed'
+                ? 'Klicke auf eine freie Grasfläche, um den Blumensamen zu pflanzen!'
                 : 'Klicke auf eine freie Grasfläche, um das Gebäude zu platzieren!'}
               <button style={styles.placementCancelBtn} onClick={handleCancelPlacement}>
                 Abbrechen [ESC]
@@ -1731,6 +1831,14 @@ export default function Game() {
                     <span style={styles.btnIcon}>🔨</span>
                     <span style={styles.btnLabel}>Handwerk</span>
                     <span style={styles.btnHint}>[C]</span>
+                  </button>
+                  <button
+                    style={{ ...styles.actionBtn, borderColor: 'rgba(176, 196, 255, 0.4)' }}
+                    onClick={() => setShowShop(true)}
+                  >
+                    <span style={styles.btnIcon}>🛒</span>
+                    <span style={styles.btnLabel}>Shop</span>
+                    <span style={styles.btnHint}>[S]</span>
                   </button>
                   <button
                     style={{ ...styles.actionBtn, borderColor: 'rgba(139,115,85,0.4)' }}
@@ -1816,6 +1924,15 @@ export default function Game() {
           gameState={gameState}
           onCraft={handleCraft}
           onClose={() => setShowCrafting(false)}
+        />
+      )}
+
+      {/* Shop */}
+      {showShop && (
+        <ShopPanel
+          inventory={gameState.inventory}
+          onPurchase={(offer) => { handleShopPurchase(offer); }}
+          onClose={() => setShowShop(false)}
         />
       )}
 

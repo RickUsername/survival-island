@@ -72,6 +72,30 @@ export function checkVacationExpiry(vacation) {
   return vacation;
 }
 
+// Auto-Urlaub: Wenn ein Bedürfnis < 10% UND Urlaub nicht aktiv UND Kontingent vorhanden
+// → automatisch in den Urlaub schicken (Schutz vor Verhungern wenn man offline ist).
+// Gibt das aktualisierte vacation-Objekt + Flag zurück.
+export function checkAutoVacation(vacation, needs) {
+  if (vacation.isActive) return { vacation, triggered: false };
+
+  const critical = (needs.hunger < 10) || (needs.thirst < 10) || (needs.mood < 10);
+  if (!critical) return { vacation, triggered: false };
+
+  const remaining = getRemainingVacationHours(vacation);
+  if (remaining <= 0) return { vacation, triggered: false };
+
+  return {
+    vacation: {
+      ...vacation,
+      isActive: true,
+      activatedAt: Date.now(),
+      currentYear: new Date().getFullYear(),
+      autoActivated: true,
+    },
+    triggered: true,
+  };
+}
+
 // Urlaubs-Info formatieren
 export function formatVacationInfo(vacation) {
   const remaining = getRemainingVacationHours(vacation);

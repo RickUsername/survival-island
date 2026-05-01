@@ -8,9 +8,9 @@ import { syncDown } from '../systems/CloudSaveService';
 import { useAuth } from '../contexts/AuthContext';
 import { updateNeeds, calculateOfflineNeeds, checkDeath, updateWaterCollector } from '../systems/NeedsSystem';
 import { checkWeatherUpdate, getCurrentWeather } from '../systems/WeatherSystem';
-import { checkVacationExpiry } from '../systems/VacationSystem';
+import { checkVacationExpiry, checkAutoVacation } from '../systems/VacationSystem';
 import { SAVE_INTERVAL, TILE_SIZE, COLLISION_TILES, MAP_COLS, MAP_ROWS, FOOD_SPOIL_TIME, TILE_TYPES, HUNGER_DRAIN_PER_SEC, THIRST_DRAIN_PER_SEC, MOOD_DRAIN_PER_SEC, SHELTER_MOOD_MODIFIERS, WEATHER_TYPES } from '../utils/constants';
-import { updateAnimals, updateAnimalHunger, checkTreeFruitDrop, checkTreeSeedDrop, checkAnimalSpawn, getRandomGrassPosition } from '../systems/AnimalSystem';
+import { updateAnimals, updateAnimalHunger, checkTreeFruitDrop, checkTreeSeedDrop, checkAnimalSpawn, getRandomGrassPosition, checkChickenEggs } from '../systems/AnimalSystem';
 import { checkEggHatch, createCat, updateCatBehavior, updateCatAffection } from '../systems/CatSystem';
 import { finishGathering, getElapsedGatheringTime, isGatheringComplete } from '../systems/GatheringSystem';
 import { drainToolDurability } from '../systems/ToolSystem';
@@ -214,8 +214,14 @@ export default function useGameLoop() {
         state.needs = calculateOfflineNeeds(state);
       }
 
-      // Tod-Check nach Offline-Berechnung
-      if (checkDeath(state.needs)) {
+      // Auto-Urlaub falls ein Bedürfnis kritisch (< 10%) UND Kontingent vorhanden
+      // (greift bevor der Tod-Check zuschlägt — verhindert Tod durch vergessenes Online-Kommen)
+      const autoVac = checkAutoVacation(state.vacation, state.needs);
+      if (autoVac.triggered) {
+        state.vacation = autoVac.vacation;
+        // Bedürfnisse nicht mehr weiter rechnen — Urlaub ist jetzt aktiv
+      } else if (checkDeath(state.needs)) {
+        // Tod nur wenn Auto-Urlaub nicht greifen konnte (Kontingent leer)
         setIsDead(true);
         if (state.needs.hunger <= 0) setDeathCause('hunger');
         else if (state.needs.thirst <= 0) setDeathCause('thirst');
@@ -292,6 +298,23 @@ export default function useGameLoop() {
       if (offlineSecs > 0) {
         const { updatedAnimals } = updateAnimalHunger(state.animals, offlineSecs);
         state.animals = updatedAnimals;
+      }
+    }
+
+    // Offline Hühner-Eier nachrechnen (auch im Urlaub — Hühner legen weiter)
+    if (state.animals && state.animals.length > 0) {
+      const { animals: chickenUpdated, eggsLaid } = checkChickenEggs(state.animals);
+      state.animals = chickenUpdated;
+      if (eggsLaid > 0) {
+        if (!state.inventory) state.inventory = {};
+        if (!state.inventory.chicken_egg) {
+          state.inventory.chicken_egg = { amount: 0, collectedAt: Date.now() };
+        }
+        state.inventory.chicken_egg = {
+          ...state.inventory.chicken_egg,
+          amount: state.inventory.chicken_egg.amount + eggsLaid,
+          collectedAt: Date.now(),
+        };
       }
     }
 
@@ -405,8 +428,12 @@ export default function useGameLoop() {
         // Bedürfnisse aktualisieren
         const newNeeds = updateNeeds(prev, delta);
 
-        // Tod prüfen
-        if (checkDeath(newNeeds)) {
+        // Auto-Urlaub bei kritischen Bedürfnissen (< 10%) — verhindert Tod
+        const autoVac = checkAutoVacation(prev.vacation, newNeeds);
+        let workingVacation = autoVac.triggered ? autoVac.vacation : prev.vacation;
+
+        // Tod nur prüfen, wenn Auto-Urlaub NICHT eingesprungen ist (Kontingent leer)
+        if (!autoVac.triggered && checkDeath(newNeeds)) {
           setIsDead(true);
           if (newNeeds.hunger <= 0) setDeathCause('hunger');
           else if (newNeeds.thirst <= 0) setDeathCause('thirst');
@@ -414,7 +441,7 @@ export default function useGameLoop() {
         }
 
         // Wetter prüfen
-        let updated = { ...prev, needs: newNeeds, lastUpdate: now };
+        let updated = { ...prev, needs: newNeeds, lastUpdate: now, vacation: workingVacation };
         updated = checkWeatherUpdate(updated);
         updated.vacation = checkVacationExpiry(updated.vacation);
 
@@ -426,6 +453,24 @@ export default function useGameLoop() {
           const { updatedAnimals } = updateAnimalHunger(updated.animals, delta);
           updated.animals = updatedAnimals;
           // Tote Tiere werden einfach entfernt
+        }
+
+        // Hühner-Eier prüfen (jeden Tick, aber legt nur alle 24h)
+        if (updated.animals && updated.animals.length > 0) {
+          const { animals: chickenUpdated, eggsLaid } = checkChickenEggs(updated.animals);
+          updated.animals = chickenUpdated;
+          if (eggsLaid > 0) {
+            const newInventory = { ...updated.inventory };
+            if (!newInventory.chicken_egg) {
+              newInventory.chicken_egg = { amount: 0, collectedAt: Date.now() };
+            }
+            newInventory.chicken_egg = {
+              ...newInventory.chicken_egg,
+              amount: newInventory.chicken_egg.amount + eggsLaid,
+              collectedAt: Date.now(),
+            };
+            updated.inventory = newInventory;
+          }
         }
 
         // Baum-Obstabwurf prüfen (Stufe berechnen)

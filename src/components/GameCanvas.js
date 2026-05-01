@@ -10,6 +10,7 @@ import {
 import homeMap, { TREE_POSITION } from '../data/homeMap';
 import { ANIMAL_TYPES, ANIMAL_HUNGER_MAX } from '../systems/AnimalSystem';
 import { getCatStage, CAT_AFFECTION_MAX } from '../systems/CatSystem';
+import { FLOWER_TYPES, getFlowerGrowth, getFlowerStage, isFlowerBlooming } from '../systems/FlowerSystem';
 
 export default function GameCanvas({ gameState, onMapClick, onMouseMove, placementGhost, canvasSize, visitorPosition, visitorName, visitMode, hostSnapshot }) {
   const canvasRef = useRef(null);
@@ -1382,8 +1383,11 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
     const isOccupiedByTree = (gameState?.plantedTrees || []).some(
       t => t.col === placementGhost.col && t.row === placementGhost.row
     );
+    const isOccupiedByFlower = (gameState?.placedFlowers || []).some(
+      f => f.col === placementGhost.col && f.row === placementGhost.row
+    );
     const isMainTree = placementGhost.col === TREE_POSITION.col && placementGhost.row === TREE_POSITION.row;
-    const valid = isGrass && !isOccupiedByOther && !isOccupiedByTree && !isMainTree;
+    const valid = isGrass && !isOccupiedByOther && !isOccupiedByTree && !isOccupiedByFlower && !isMainTree;
 
     // Markierung (grün = gültig, rot = ungültig)
     ctx.fillStyle = valid ? 'rgba(46, 204, 113, 0.3)' : 'rgba(231, 76, 60, 0.3)';
@@ -1414,6 +1418,28 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
         ctx.fillStyle = '#4CAF50';
         ctx.beginPath();
         ctx.ellipse(scx, scy - 16, 8, 10, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        break;
+      }
+      case 'flower_seed': {
+        // Blumensamen-Vorschau (Stiel + Blüte in Sortenfarbe)
+        ctx.globalAlpha = alpha;
+        const fcx = gx + TILE_SIZE / 2;
+        const fcy = gy + TILE_SIZE - 8;
+        const def = FLOWER_TYPES[placementGhost.flowerType];
+        const petalColor = def?.petalColor || '#F5C033';
+        const stemColor = def?.stemColor || '#3a8a2e';
+        ctx.strokeStyle = stemColor;
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(fcx, fcy);
+        ctx.lineTo(fcx, fcy - 14);
+        ctx.stroke();
+        ctx.fillStyle = petalColor;
+        ctx.beginPath();
+        ctx.arc(fcx, fcy - 17, 5, 0, Math.PI * 2);
         ctx.fill();
         ctx.globalAlpha = 1;
         break;
@@ -1591,6 +1617,87 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
           ctx.lineTo(ax - half * 0.35, ay + half + gLegOff);
           ctx.moveTo(ax + half * 0.2, ay + half * 0.3);
           ctx.lineTo(ax + half * 0.25, ay + half - gLegOff);
+          ctx.stroke();
+          break;
+        }
+
+        case 'chicken': {
+          // Erwachsenes Huhn — beige/weiß mit roter Krone
+          ctx.fillStyle = 'rgba(0,0,0,0.15)';
+          ctx.beginPath();
+          ctx.ellipse(ax, ay + half + 2, half * 0.6, 3, 0, 0, Math.PI * 2);
+          ctx.fill();
+          // Körper (rundlich, weiß-beige)
+          ctx.fillStyle = '#F4E4A0';
+          ctx.beginPath();
+          ctx.ellipse(ax, ay + 2, half * 0.6, half * 0.5, 0, 0, Math.PI * 2);
+          ctx.fill();
+          // Bauch heller
+          ctx.fillStyle = '#FFF1B8';
+          ctx.beginPath();
+          ctx.ellipse(ax - 1, ay + 4, half * 0.4, half * 0.32, 0, 0, Math.PI * 2);
+          ctx.fill();
+          // Kopf
+          ctx.fillStyle = '#F4E4A0';
+          ctx.beginPath();
+          ctx.arc(ax + half * 0.45, ay - half * 0.2, half * 0.32, 0, Math.PI * 2);
+          ctx.fill();
+          // Schnabel (orange)
+          ctx.fillStyle = '#F58220';
+          ctx.beginPath();
+          ctx.moveTo(ax + half * 0.7, ay - half * 0.18);
+          ctx.lineTo(ax + half * 0.95, ay - half * 0.13);
+          ctx.lineTo(ax + half * 0.7, ay - half * 0.05);
+          ctx.closePath();
+          ctx.fill();
+          // Hahnenkamm (rot, gewellt)
+          ctx.fillStyle = '#D03030';
+          ctx.beginPath();
+          ctx.arc(ax + half * 0.35, ay - half * 0.55, 2.5, 0, Math.PI * 2);
+          ctx.arc(ax + half * 0.5, ay - half * 0.62, 2.5, 0, Math.PI * 2);
+          ctx.arc(ax + half * 0.6, ay - half * 0.5, 2.2, 0, Math.PI * 2);
+          ctx.fill();
+          // Kehllappen (rot, unter dem Schnabel)
+          ctx.fillStyle = '#D03030';
+          ctx.beginPath();
+          ctx.ellipse(ax + half * 0.6, ay + half * 0.05, 1.8, 2.5, 0, 0, Math.PI * 2);
+          ctx.fill();
+          // Auge
+          ctx.fillStyle = '#000';
+          ctx.beginPath();
+          ctx.arc(ax + half * 0.55, ay - half * 0.25, 1.2, 0, Math.PI * 2);
+          ctx.fill();
+          // Glanzpunkt im Auge
+          ctx.fillStyle = '#fff';
+          ctx.beginPath();
+          ctx.arc(ax + half * 0.58, ay - half * 0.27, 0.4, 0, Math.PI * 2);
+          ctx.fill();
+          // Flügel (kleiner Kreis am Körper)
+          ctx.fillStyle = '#E8C870';
+          ctx.beginPath();
+          ctx.ellipse(ax - half * 0.15, ay + 1, half * 0.3, half * 0.22, -0.2, 0, Math.PI * 2);
+          ctx.fill();
+          // Beine (gelb-orange)
+          ctx.strokeStyle = '#F58220';
+          ctx.lineWidth = 1.8;
+          const chLegOff = animal.state === 'walking' ? Math.sin(Date.now() / 180) * 2 : 0;
+          ctx.beginPath();
+          ctx.moveTo(ax - half * 0.15, ay + half * 0.35);
+          ctx.lineTo(ax - half * 0.2, ay + half + 1 + chLegOff);
+          ctx.moveTo(ax + half * 0.15, ay + half * 0.35);
+          ctx.lineTo(ax + half * 0.2, ay + half + 1 - chLegOff);
+          ctx.stroke();
+          // Füße (3 kleine Striche)
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(ax - half * 0.2, ay + half + 1 + chLegOff);
+          ctx.lineTo(ax - half * 0.32, ay + half + 2 + chLegOff);
+          ctx.moveTo(ax - half * 0.2, ay + half + 1 + chLegOff);
+          ctx.lineTo(ax - half * 0.08, ay + half + 2 + chLegOff);
+          ctx.moveTo(ax + half * 0.2, ay + half + 1 - chLegOff);
+          ctx.lineTo(ax + half * 0.32, ay + half + 2 - chLegOff);
+          ctx.moveTo(ax + half * 0.2, ay + half + 1 - chLegOff);
+          ctx.lineTo(ax + half * 0.08, ay + half + 2 - chLegOff);
           ctx.stroke();
           break;
         }
@@ -1838,6 +1945,8 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
         ctx.fillStyle = '#FF69B4';
         ctx.font = '7px sans-serif';
         ctx.fillText('❤', barX - 9, barY + barH);
+      } else if (animal.type === 'chicken') {
+        // Hühner: kein Statusbalken (verhungern nicht)
       } else {
         // Normale Tiere: Hunger-Balken
         const hunger = animal.hunger ?? ANIMAL_HUNGER_MAX;
@@ -2082,6 +2191,124 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
     }
   }, [gameState]);
 
+  // Gepflanzte Blumen zeichnen (wachsen 5 Tage, dann volle Blüte)
+  const drawFlowers = useCallback((ctx, camera) => {
+    const state = gameStateRef.current;
+    if (!state?.placedFlowers || state.placedFlowers.length === 0) return;
+
+    const PLAYER_HEIGHT_PX = 40; // Höhe der Spieler-Figur in Pixeln (ca.)
+
+    for (const flower of state.placedFlowers) {
+      const def = FLOWER_TYPES[flower.flowerType];
+      if (!def) continue;
+
+      const fx = flower.col * TILE_SIZE + TILE_SIZE / 2 + camera.x;
+      const fy = flower.row * TILE_SIZE + TILE_SIZE / 2 + camera.y;
+
+      const growth = getFlowerGrowth(flower.plantedAt);
+      const stage = getFlowerStage(flower.plantedAt);
+      const blooming = isFlowerBlooming(flower.plantedAt);
+
+      // Volle Blütenhöhe je nach Sorte (Sonnenblume = ganze Person)
+      const fullHeight = PLAYER_HEIGHT_PX * def.heightRatio;
+      // Während des Wachstums lineare Höhenzunahme von ~10% bis 100%
+      const currentHeight = fullHeight * (0.1 + 0.9 * growth);
+
+      // Schatten am Boden
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.beginPath();
+      ctx.ellipse(fx, fy + 6, 6 + 4 * growth, 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      const baseY = fy + 6;          // Bodenhöhe
+      const topY = baseY - currentHeight; // Spitze der Pflanze
+
+      // Stängel (sanftes Wiegen mit Sinus-Animation)
+      const sway = Math.sin(Date.now() / 700 + flower.col * 1.3 + flower.row * 0.7) * 1.2 * growth;
+      ctx.strokeStyle = def.stemColor;
+      ctx.lineWidth = Math.max(1.5, 2 + growth * 1.5);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(fx, baseY);
+      ctx.quadraticCurveTo(fx + sway * 0.5, baseY - currentHeight * 0.5, fx + sway, topY);
+      ctx.stroke();
+
+      // Blätter am Stängel (ab Stage 1)
+      if (stage >= 1) {
+        ctx.fillStyle = def.stemColor;
+        const leafY1 = baseY - currentHeight * 0.4;
+        const leafY2 = baseY - currentHeight * 0.65;
+        ctx.beginPath();
+        ctx.ellipse(fx - 4, leafY1, 5, 2.2, -0.3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.ellipse(fx + 4 + sway * 0.5, leafY2, 5, 2.2, 0.3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Blütenkopf
+      const headX = fx + sway;
+      const headY = topY;
+      const headSize = Math.max(2, 4 + growth * (def.heightRatio === 1.0 ? 9 : 5));
+
+      if (stage === 0) {
+        // Samen / kleiner Trieb
+        ctx.fillStyle = '#3a8a2e';
+        ctx.beginPath();
+        ctx.arc(headX, headY, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (stage <= 2) {
+        // Knospe (geschlossen)
+        ctx.fillStyle = def.petalEdge;
+        ctx.beginPath();
+        ctx.ellipse(headX, headY, headSize * 0.5, headSize * 0.8, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = def.petalColor;
+        ctx.beginPath();
+        ctx.ellipse(headX, headY + 1, headSize * 0.35, headSize * 0.6, 0, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        // Halbblüte oder Vollblüte
+        const openness = stage === 3 ? 0.6 : 1.0;
+        const petalCount = def.petalCount;
+        const petalLength = headSize * (0.9 + openness * 0.4);
+        const petalWidth = headSize * 0.45;
+
+        // Blütenblätter (Ring)
+        for (let p = 0; p < petalCount; p++) {
+          const angle = (p / petalCount) * Math.PI * 2;
+          const px = headX + Math.cos(angle) * petalLength * 0.5 * openness;
+          const py = headY + Math.sin(angle) * petalLength * 0.5 * openness;
+
+          // Petal-Schatten/Rand
+          ctx.fillStyle = def.petalEdge;
+          ctx.beginPath();
+          ctx.ellipse(px, py, petalLength * 0.55, petalWidth, angle, 0, Math.PI * 2);
+          ctx.fill();
+          // Petal-Hauptfläche
+          ctx.fillStyle = def.petalColor;
+          ctx.beginPath();
+          ctx.ellipse(px, py, petalLength * 0.45, petalWidth * 0.78, angle, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Blütenmitte
+        ctx.fillStyle = def.centerColor;
+        ctx.beginPath();
+        ctx.arc(headX, headY, headSize * 0.6 * openness, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Glanzpunkt
+        if (blooming) {
+          ctx.fillStyle = 'rgba(255,255,255,0.3)';
+          ctx.beginPath();
+          ctx.arc(headX - headSize * 0.2, headY - headSize * 0.2, headSize * 0.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+  }, []);
+
   // Wetter-Overlay (optimiert: alle Tropfen in einem einzigen Path gezeichnet
   // statt 200 einzelner stroke()-Aufrufe pro Frame)
   const drawWeather = useCallback((ctx, width, height) => {
@@ -2258,7 +2485,7 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
   drawFnsRef.current = {
     getCameraOffset, getScale, drawTile, drawPlayer, drawBuildings,
     drawGrowingTree, drawDroppedSeeds, drawWeeds, drawPlantedTrees,
-    drawAnimals, drawPlacementGhost, drawWeather, drawExitMarkers,
+    drawFlowers, drawAnimals, drawPlacementGhost, drawWeather, drawExitMarkers,
     drawVisitor, drawHostAvatar,
   };
 
@@ -2328,6 +2555,9 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
 
       // Gepflanzte Bäume
       fns.drawPlantedTrees(ctx, zeroCamera);
+
+      // Gepflanzte Blumen
+      fns.drawFlowers(ctx, zeroCamera);
 
       // Tiere
       fns.drawAnimals(ctx, zeroCamera);

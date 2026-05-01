@@ -86,6 +86,9 @@ export function getDefaultGameState() {
     // Letzter Unkraut-Spawn
     lastWeedSpawn: null,
 
+    // Gepflanzte Blumen: [{ id, col, row, plantedAt, flowerType }]
+    placedFlowers: [],
+
     // Tagebuch (Lernfach-Tracking) - überlebt den Tod
     diary: {
       topics: [],        // [{ id, name, totalTimeMs, createdAt }]
@@ -203,6 +206,9 @@ export function loadGame(userId) {
     // Migration: Unkraut-System ergänzen
     if (!gameState.weeds) gameState.weeds = [];
     if (gameState.lastWeedSpawn === undefined) gameState.lastWeedSpawn = null;
+
+    // Migration: Blumen-System ergänzen
+    if (!gameState.placedFlowers) gameState.placedFlowers = [];
 
     // Migration: Tagebuch ergänzen
     if (!gameState.diary) {
@@ -405,6 +411,7 @@ function applyMigrations(gameState) {
   if (!gs.plantedTrees) gs.plantedTrees = [];
   if (!gs.weeds) gs.weeds = [];
   if (gs.lastWeedSpawn === undefined) gs.lastWeedSpawn = null;
+  if (!gs.placedFlowers) gs.placedFlowers = [];
   if (!gs.diary) gs.diary = { topics: [], activeTopicId: null };
   if (!gs.achievements) gs.achievements = { unlockedIds: [], lastUnlocked: null, lastUnlockedAt: null };
   if (!gs.eggReceivedFrom) gs.eggReceivedFrom = [];

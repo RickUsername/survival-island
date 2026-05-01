@@ -16,14 +16,19 @@ export const TIER_LOOT_MULTIPLIER = {
   crystal: 1.5,  // 50% mehr Bonus
 };
 
+// Werkzeug noch nutzbar? (durability > 0 ODER null = unzerstörbar)
+function isToolActive(tool) {
+  return tool.durability === null || tool.durability > 0;
+}
+
 // Prüfen ob Spieler ein Werkzeug eines bestimmten Typs hat
 export function hasTool(tools, toolType) {
-  return tools.some(t => t.toolType === toolType && t.durability > 0);
+  return tools.some(t => t.toolType === toolType && isToolActive(t));
 }
 
 // Bestes Werkzeug eines Typs finden
 export function getBestTool(tools, toolType) {
-  const matching = tools.filter(t => t.toolType === toolType && t.durability > 0);
+  const matching = tools.filter(t => t.toolType === toolType && isToolActive(t));
   if (matching.length === 0) return null;
 
   // Nach Tier sortieren (bestes zuerst)
@@ -36,7 +41,7 @@ export function hasToolOfTier(tools, toolType, minTier) {
   const minTierIndex = TIER_ORDER.indexOf(minTier);
   return tools.some(t =>
     t.toolType === toolType &&
-    t.durability > 0 &&
+    isToolActive(t) &&
     TIER_ORDER.indexOf(t.tier) >= minTierIndex
   );
 }
@@ -45,7 +50,7 @@ export function hasToolOfTier(tools, toolType, minTier) {
 export function getActiveToolTypes(tools) {
   const types = new Set();
   for (const tool of tools) {
-    if (tool.durability > 0) {
+    if (isToolActive(tool)) {
       types.add(tool.toolType);
     }
   }
@@ -63,12 +68,15 @@ export function drainToolDurability(tools, durationMs, biomeToolTypes) {
     const bestIdx = findBestToolIndex(newTools, toolType);
     if (bestIdx === -1) continue;
 
+    // Werkzeuge mit null durability sind unzerstörbar (z.B. Brille)
+    if (newTools[bestIdx].durability === null) continue;
+
     // Haltbarkeit reduzieren (1 Minute pro Minute Reise)
     newTools[bestIdx].durability = Math.max(0, newTools[bestIdx].durability - durationMin);
   }
 
-  // Kaputte Werkzeuge entfernen (durability <= 0)
-  return newTools.filter(t => t.durability > 0);
+  // Kaputte Werkzeuge entfernen (durability === 0). null bleibt erhalten.
+  return newTools.filter(t => t.durability === null || t.durability > 0);
 }
 
 // Index des besten Werkzeugs eines Typs finden
@@ -77,7 +85,7 @@ function findBestToolIndex(tools, toolType) {
   let bestTier = -1;
 
   for (let i = 0; i < tools.length; i++) {
-    if (tools[i].toolType === toolType && tools[i].durability > 0) {
+    if (tools[i].toolType === toolType && isToolActive(tools[i])) {
       const tierIdx = TIER_ORDER.indexOf(tools[i].tier);
       if (tierIdx > bestTier) {
         bestTier = tierIdx;
@@ -87,6 +95,11 @@ function findBestToolIndex(tools, toolType) {
   }
 
   return bestIdx;
+}
+
+// Hat der Spieler die Späherbrille im Inventar (Loot-Verdoppler)?
+export function hasGoggles(tools) {
+  return tools.some(t => t.toolType === 'goggles');
 }
 
 // Neues Werkzeug erstellen aus Item-Definition

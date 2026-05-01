@@ -5,7 +5,7 @@
 import { MAX_GATHERING_DURATION } from '../utils/constants';
 import { calculateLoot } from '../data/lootTables';
 import { calculateMoodFromGathering } from './NeedsSystem';
-import { getActiveToolTypes } from './ToolSystem';
+import { getActiveToolTypes, hasGoggles } from './ToolSystem';
 
 // Biom → Werkzeug-Typ Zuordnung (für Haltbarkeits-Abzug)
 const BIOME_TOOL_MAP = {
@@ -99,8 +99,14 @@ export function finishGathering(gathering, tools = []) {
   if (!gathering) return { items: [], moodGain: 0 };
 
   const elapsed = getElapsedGatheringTime(gathering);
-  const items = calculateLoot(gathering.biome, elapsed, tools);
+  let items = calculateLoot(gathering.biome, elapsed, tools);
   const moodGain = calculateMoodFromGathering(elapsed);
+
+  // Späherbrille: alle Item-Mengen verdoppeln
+  const gogglesActive = hasGoggles(tools);
+  if (gogglesActive) {
+    items = items.map(it => ({ ...it, amount: it.amount * 2 }));
+  }
 
   // Welche Tool-Typen wurden in diesem Biom benutzt?
   const biomeToolTypes = BIOME_TOOL_MAP[gathering.biome] || [];
@@ -115,6 +121,7 @@ export function finishGathering(gathering, tools = []) {
     biome: gathering.biome,
     topicId: gathering.topicId,
     usedToolTypes, // Für Haltbarkeits-Abzug
+    gogglesActive,
   };
 }
 

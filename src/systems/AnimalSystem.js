@@ -7,12 +7,48 @@ import { TILE_SIZE, MAP_COLS, MAP_ROWS, TILE_TYPES } from '../utils/constants';
 
 // Tier-Definitionen
 export const ANIMAL_TYPES = {
-  heron:  { id: 'heron',  name: 'Reiher', biome: 'south', color: '#B0C4DE', size: 28 },
-  goat:   { id: 'goat',   name: 'Ziege',  biome: 'east',  color: '#C4A882', size: 26 },
-  deer:   { id: 'deer',   name: 'Reh',    biome: 'north', color: '#A0522D', size: 28 },
-  rabbit: { id: 'rabbit', name: 'Hase',   biome: 'west',  color: '#D2B48C', size: 18 },
-  cat:    { id: 'cat',    name: 'Katze',  biome: null,    color: '#F5A623', size: 20 },
+  heron:   { id: 'heron',   name: 'Reiher', biome: 'south', color: '#B0C4DE', size: 28 },
+  goat:    { id: 'goat',    name: 'Ziege',  biome: 'east',  color: '#C4A882', size: 26 },
+  deer:    { id: 'deer',    name: 'Reh',    biome: 'north', color: '#A0522D', size: 28 },
+  rabbit:  { id: 'rabbit',  name: 'Hase',   biome: 'west',  color: '#D2B48C', size: 18 },
+  cat:     { id: 'cat',     name: 'Katze',  biome: null,    color: '#F5A623', size: 20 },
+  chicken: { id: 'chicken', name: 'Huhn',   biome: null,    color: '#F4E4A0', size: 22 },
 };
+
+// Erwachsenes Huhn (gekauft) — legt täglich ein Ei
+export function createChicken(x, y) {
+  return {
+    id: `chicken_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+    type: 'chicken',
+    x,
+    y,
+    state: 'idle',
+    stateTimer: 5000,
+    dirX: 0,
+    dirY: 0,
+    hunger: ANIMAL_HUNGER_MAX,
+    spawnedAt: Date.now(),
+    lastEggLaid: Date.now(), // Erste Eiablage in 24h
+  };
+}
+
+// Prüfen ob ein Huhn ein neues Ei legen darf (alle 24h)
+export const CHICKEN_EGG_INTERVAL = 24 * 60 * 60 * 1000;
+
+export function checkChickenEggs(animals) {
+  // Anzahl neuer Eier zurückgeben + aktualisierte Tiere
+  const now = Date.now();
+  let eggsLaid = 0;
+  const updated = (animals || []).map(a => {
+    if (a.type !== 'chicken') return a;
+    const last = a.lastEggLaid || a.spawnedAt || now;
+    const fullCycles = Math.floor((now - last) / CHICKEN_EGG_INTERVAL);
+    if (fullCycles <= 0) return a;
+    eggsLaid += fullCycles;
+    return { ...a, lastEggLaid: last + fullCycles * CHICKEN_EGG_INTERVAL };
+  });
+  return { animals: updated, eggsLaid };
+}
 
 // Hunger-Konfiguration
 export const ANIMAL_HUNGER_MAX = 100;
@@ -226,6 +262,11 @@ export function updateAnimalHunger(animals, deltaSec) {
   for (const animal of animals) {
     // Katzen nutzen Zuneigung statt Hunger (CatSystem)
     if (animal.type === 'cat') {
+      updatedAnimals.push(animal);
+      continue;
+    }
+    // Hühner verhungern nicht — sie sind domestiziert
+    if (animal.type === 'chicken') {
       updatedAnimals.push(animal);
       continue;
     }
