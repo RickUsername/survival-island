@@ -1521,10 +1521,20 @@ export default function Game() {
 
   // Urlaub ändern
   const handleVacationChange = useCallback((newVacation) => {
-    setGameState(prev => ({
-      ...prev,
-      vacation: newVacation,
-    }));
+    setGameState(prev => {
+      // Urlaub wird beendet: Falls Hunger oder Durst bei 0% steht,
+      // auf 10% anheben damit der Charakter nicht sofort stirbt.
+      // (Dieser Sonderfall tritt nur auf wenn jemand durch eine Umstellung
+      // mit 0% in den Urlaubsmodus geraten ist und ihn jetzt verlassen will.)
+      let needs = prev.needs;
+      if (!newVacation.isActive && prev.vacation.isActive) {
+        const needsFixed = { ...needs };
+        if (needsFixed.hunger <= 0) needsFixed.hunger = 10;
+        if (needsFixed.thirst <= 0) needsFixed.thirst = 10;
+        needs = needsFixed;
+      }
+      return { ...prev, vacation: newVacation, needs };
+    });
   }, [setGameState]);
 
   // Crafting-Ergebnis anwenden
