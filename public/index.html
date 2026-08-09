@@ -42,10 +42,21 @@
         window.addEventListener('load', () => {
           var refreshing = false;
 
+          // Gab es beim Laden schon einen Service Worker?
+          // Wichtig: sw.js ruft in 'activate' clients.claim() auf. Dadurch feuert
+          // 'controllerchange' AUCH bei der Erstinstallation — obwohl es gar kein
+          // Update gibt. Ohne diese Unterscheidung wurde jeder Erstbesuch einmal
+          // grundlos neu geladen und warf den Spieler zurück auf den Login.
+          var hadController = !!navigator.serviceWorker.controller;
+
           // 1) Controller-Wechsel erkennen: Wenn ein NEUER SW die Kontrolle übernimmt → Reload
           //    ABER: Nicht während der App-Initialisierung (sonst Endlos-Reload)
           navigator.serviceWorker.addEventListener('controllerchange', function() {
             if (refreshing) return;
+            if (!hadController) {
+              console.log('[PWA] Erstinstallation — kein Reload nötig');
+              return;
+            }
             if (!window.__appReady) {
               console.log('[PWA] SW-Wechsel während Laden — warte...');
               setTimeout(function() {

@@ -2,6 +2,8 @@
 // Achievement-System - Errungenschaften
 // ============================================
 
+import { cozyScore } from './InteriorSystem';
+
 export const ACHIEVEMENTS = [
   {
     id: 'erste_schritte',
@@ -153,6 +155,20 @@ export const ACHIEVEMENTS = [
     description: 'Einen Regenfänger gebaut',
     emoji: '🌧️',
     check: (gs) => gs.buildings?.hasWaterCollector === true,
+  },
+  {
+    id: 'wohnlich',
+    name: 'Wohnlich',
+    description: 'Die Hütte zur Hälfte eingerichtet',
+    emoji: '🪑',
+    check: (gs) => cozyScore(gs) >= 50,
+  },
+  {
+    id: 'zuhause',
+    name: 'Zuhause',
+    description: 'Die Hütte vollständig eingerichtet',
+    emoji: '🏡',
+    check: (gs) => cozyScore(gs) >= 100,
   },
 ];
 

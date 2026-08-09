@@ -30,17 +30,53 @@ export const MOOD_GAIN_PER_HOUR = 30; // +30 Stimmung pro Stunde sammeln (120 Mi
 export const WEATHER_TYPES = {
   SUNNY: 'sunny',
   RAINY: 'rainy',
+  STORM: 'storm',     // Gewitter: Regen mit Sturm
+  FOG: 'fog',         // Morgennebel
+  HEAT: 'heat',       // Hitzewelle
+  SNOW: 'snow',       // Schnee (nur im Winter)
 };
+
+// Wetterlagen, die als „nass" gelten (Regenfänger füllt, Boden wird dunkel)
+export const WET_WEATHER = [WEATHER_TYPES.RAINY, WEATHER_TYPES.STORM];
 
 // Stimmungs-Malus je Unterstand-Level (Index = Level)
 // Format: { rain: Multiplikator, sun: Multiplikator }
+//
+// Grundgedanke: Draußen im Regen zu sitzen drückt spürbar auf die Stimmung.
+// Je besser das Dach über dem Kopf, desto weniger macht das Wetter aus —
+// ab dem Steinhaus (Level 5) ist Regen praktisch egal.
+// (Vorher waren rain und sun in jedem Eintrag identisch, das Wetter hatte
+//  damit überhaupt keine Wirkung.)
 export const SHELTER_MOOD_MODIFIERS = [
-  { rain: 1.25, sun: 1.25 },  // Kein Unterstand
-  { rain: 1.10, sun: 1.10 },  // Level 1
-  { rain: 1.08, sun: 1.08 },  // Level 2
-  { rain: 1.06, sun: 1.06 },  // Level 3
-  { rain: 1.04, sun: 1.04 },  // Level 4
-  { rain: 1.02, sun: 1.02 },  // Level 5
+  { sun: 1.25, rain: 2.10 },  // Kein Unterstand — schutzlos
+  { sun: 1.10, rain: 1.70 },  // Level 1: Unterstand
+  { sun: 1.08, rain: 1.45 },  // Level 2: Hütte
+  { sun: 1.06, rain: 1.26 },  // Level 3: Blockhaus
+  { sun: 1.04, rain: 1.12 },  // Level 4: Steinhaus
+  { sun: 1.02, rain: 1.02 },  // Level 5: dicht und warm
+];
+
+// Hunger-Malus bei nassem/kaltem Wetter (Index = Unterstand-Level)
+// Wer friert, verbraucht mehr Energie. Deutlich milder als der Stimmungs-
+// Malus, damit Regen nicht zur Nahrungsfalle wird.
+export const SHELTER_HUNGER_MODIFIERS = [
+  1.45,  // Kein Unterstand
+  1.30,  // Level 1
+  1.20,  // Level 2
+  1.12,  // Level 3
+  1.06,  // Level 4
+  1.00,  // Level 5
+];
+
+// Durst-Malus bei Hitzewelle (Index = Unterstand-Level)
+// Schatten hilft — hier zählt jedes Dach.
+export const SHELTER_THIRST_MODIFIERS = [
+  1.80,  // Kein Unterstand
+  1.50,  // Level 1
+  1.35,  // Level 2
+  1.22,  // Level 3
+  1.10,  // Level 4
+  1.00,  // Level 5
 ];
 
 // --- Sammelreisen ---

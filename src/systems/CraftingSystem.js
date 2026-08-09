@@ -4,6 +4,7 @@
 
 import recipes from '../data/recipes';
 import { hasTool, hasToolOfTier, createTool } from './ToolSystem';
+import { addItem } from './InventorySystem';
 
 // Tier-Reihenfolge für Vergleich
 const TIER_ORDER = ['wood', 'stone', 'crystal'];
@@ -125,14 +126,8 @@ export function craft(recipe, gameState) {
     }
 
     case 'food': {
-      const foodId = recipe.result.itemId;
-      if (!newState.inventory[foodId]) {
-        newState.inventory[foodId] = { amount: 0, collectedAt: Date.now() };
-      }
-      newState.inventory[foodId] = {
-        ...newState.inventory[foodId],
-        amount: newState.inventory[foodId].amount + 1,
-      };
+      // Frisch Gekochtes setzt die Verderbsuhr mengengewichtet zurück
+      newState.inventory = addItem(newState.inventory, recipe.result.itemId, 1);
       break;
     }
 

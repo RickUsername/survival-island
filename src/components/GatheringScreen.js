@@ -12,6 +12,7 @@ import {
 } from '../systems/GatheringSystem';
 import { BIOMES } from '../utils/constants';
 import NeedsBar from './NeedsBar';
+import BiomeCanvas from './BiomeCanvas';
 
 // Benachrichtigungs-Berechtigung anfordern
 function requestNotificationPermission() {
@@ -86,10 +87,41 @@ export default function GatheringScreen({
   gathering,
   needs,
   activeTopicName,
+  weather,
+  timeOverride,
   onPause,
   onResume,
   onCancel,
 }) {
+  const [showLandscape, setShowLandscape] = useState(
+    () => localStorage.getItem('si-landscape') !== 'off'
+  );
+  const [finds, setFinds] = useState(0);
+  const [viewport, setViewport] = useState(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }));
+
+  useEffect(() => {
+    localStorage.setItem('si-landscape', showLandscape ? 'on' : 'off');
+  }, [showLandscape]);
+
+  useEffect(() => {
+    const onResize = () => {
+      const vv = window.visualViewport;
+      const w = vv ? vv.width : window.innerWidth;
+      const h = vv ? vv.height : window.innerHeight;
+      if (w > 0 && h > 0) setViewport({ width: Math.round(w), height: Math.round(h) });
+    };
+    onResize();
+    window.addEventListener('resize', onResize);
+    window.visualViewport?.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.visualViewport?.removeEventListener('resize', onResize);
+    };
+  }, []);
+
   const [elapsed, setElapsed] = useState(0);
   const [remaining, setRemaining] = useState(null);
   const notifiedRef = useRef({ hunger: false, thirst: false, death: false, twoHours: false, timerDone: false });
@@ -184,13 +216,38 @@ export default function GatheringScreen({
 
   return (
     <div style={styles.container}>
-      {/* Hintergrund-Animation */}
-      <div style={styles.background}>
-        <div style={{
-          ...styles.bgPattern,
-          animationPlayState: isPaused ? 'paused' : 'running',
-        }} />
+      {/* Begehbares Biom als Hintergrund. Die Figur läuft durch eine echte
+          Landschaft, während der Timer weiterläuft — vorher war hier nur
+          ein animiertes Muster. */}
+      <div style={{ ...styles.background, opacity: showLandscape ? 1 : 0.15 }}>
+        {showLandscape ? (
+          <BiomeCanvas
+            direction={gathering.biome}
+            weather={weather}
+            timeOverride={timeOverride}
+            canvasSize={viewport}
+            onFound={() => setFinds(f => f + 1)}
+          />
+        ) : (
+          <div style={{
+            ...styles.bgPattern,
+            animationPlayState: isPaused ? 'paused' : 'running',
+          }} />
+        )}
       </div>
+
+      {/* Landschaft an/aus — wer nur den Timer sehen will, blendet sie weg */}
+      <button
+        style={styles.landscapeToggle}
+        onClick={() => setShowLandscape(v => !v)}
+        title="Landschaft ein-/ausblenden"
+      >
+        {showLandscape ? '🗺️' : '⬛'}
+      </button>
+
+      {showLandscape && finds > 0 && (
+        <div style={styles.findsBadge}>✨ {finds} Fundstellen entdeckt</div>
+      )}
 
       {/* Biom-Info */}
       <div style={styles.biomeInfo}>
@@ -300,6 +357,18 @@ export default function GatheringScreen({
 }
 
 const styles = {
+  landscapeToggle: {
+    position: 'fixed', top: '12px', right: '12px', zIndex: 6,
+    width: '40px', height: '40px', borderRadius: '10px',
+    border: '1px solid rgba(255,255,255,0.2)', background: 'rgba(0,0,0,0.55)',
+    color: '#fff', fontSize: '18px', cursor: 'pointer',
+  },
+  findsBadge: {
+    position: 'fixed', top: '12px', left: '50%', transform: 'translateX(-50%)',
+    zIndex: 6, padding: '6px 14px', borderRadius: '999px',
+    background: 'rgba(0,0,0,0.55)', color: '#ffe9a8', fontSize: '13px',
+    border: '1px solid rgba(255,233,168,0.3)', whiteSpace: 'nowrap',
+  },
   container: {
     position: 'fixed',
     top: 0,

@@ -3,6 +3,7 @@
 // ============================================
 
 import { supabase } from '../supabaseClient';
+import { addItem } from './InventorySystem';
 
 // --- Trade erstellen ---
 export async function initiateTrade(sessionId, initiatorId, partnerId) {
@@ -190,17 +191,12 @@ export function executeTradeForPlayer(trade, myInventory, isInitiator) {
   }
 
   // 3. Empfangene Items hinzufuegen
+  let result = newInventory;
   for (const item of receivedItems) {
-    if (!newInventory[item.itemId]) {
-      newInventory[item.itemId] = { amount: 0, collectedAt: Date.now() };
-    }
-    newInventory[item.itemId] = {
-      ...newInventory[item.itemId],
-      amount: newInventory[item.itemId].amount + item.amount,
-    };
+    result = addItem(result, item.itemId, item.amount);
   }
 
-  return { success: true, inventory: newInventory };
+  return { success: true, inventory: result };
 }
 
 // --- Validierung: Hat der Spieler die Items? ---

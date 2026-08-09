@@ -10,7 +10,7 @@ const BUILDING_NAMES = {
   water_collector: 'Regenfänger',
 };
 
-export default function DemolishDialog({ building, onConfirm, onCancel }) {
+export default function DemolishDialog({ building, onConfirm, onCancel, extraWarning }) {
   if (!building) return null;
 
   const name = BUILDING_NAMES[building.type] || building.type;
@@ -24,6 +24,7 @@ export default function DemolishDialog({ building, onConfirm, onCancel }) {
         </p>
         <p style={styles.warning}>
           Das Gebäude wird zerstört und die Materialien gehen verloren!
+          {extraWarning ? ` ${extraWarning}` : ''}
         </p>
         <div style={styles.buttons}>
           <button style={styles.cancelBtn} onClick={onCancel}>

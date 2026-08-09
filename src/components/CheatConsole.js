@@ -84,6 +84,23 @@ function parseCheatCode(code) {
     return { ...special, cheatType: 'special' };
   }
 
+  // Tageszeit-Cheat: rickzeit<stunde> (0-23), rickzeitaus für Echtzeit
+  if (rest === 'zeitaus') {
+    return { type: 'set_time', value: null, label: '🕐 Tageszeit folgt wieder der Uhr', cheatType: 'special' };
+  }
+  const timeMatch = rest.match(/^zeit(\d{1,2})$/);
+  if (timeMatch) {
+    const h = parseInt(timeMatch[1], 10);
+    if (h >= 0 && h <= 23) {
+      return {
+        type: 'set_time',
+        value: h,
+        label: `🕐 Tageszeit auf ${String(h).padStart(2, '0')}:00 gesetzt`,
+        cheatType: 'special',
+      };
+    }
+  }
+
   // Katzenalter-Cheat: rickkatzenalter<tage>
   const catAgeMatch = rest.match(/^katzenalter(\d+)$/);
   if (catAgeMatch) {

@@ -4,6 +4,8 @@
 
 import { STORAGE_KEY } from '../utils/constants';
 import { migrateTools } from './ToolSystem';
+import { getDefaultStreak } from './StreakSystem';
+import { merchantDayKey } from './MerchantSystem';
 import { syncUp, fullSync } from './CloudSaveService';
 
 // Hilfsfunktion: User-spezifischer localStorage-Key
@@ -115,6 +117,16 @@ export function getDefaultGameState() {
       totalDeaths: 0,
     },
 
+    // Fokus-Serie (Tage mit Sammelreise oder Hobby) - überlebt den Tod
+    streak: getDefaultStreak(),
+
+    // Postkarten-Galerie: [{ id, dataUrl, createdAt, caption }]
+    postcards: [],
+
+    // Hütten-Innenraum: [{ id, col, row }] — überlebt den Tod nicht,
+    // gehört zum Haus und wird mit ihm abgerissen
+    interior: { furniture: [] },
+
     // Errungenschaften - überleben den Tod
     achievements: {
       unlockedIds: [],
@@ -167,6 +179,19 @@ export function loadGame(userId) {
     if (!serialized) return null;
 
     const gameState = JSON.parse(serialized);
+
+    // Pflichtfelder absichern: fehlt eines davon (beschädigter Spielstand,
+    // sehr alte Cloud-Version), lief die App vorher in einen Absturz beim
+    // ersten Zugriff auf state.vacation.isActive bzw. state.stats.
+    const defaults = getDefaultGameState();
+    if (!gameState.vacation) gameState.vacation = defaults.vacation;
+    if (!gameState.stats) gameState.stats = defaults.stats;
+    if (!gameState.needs) gameState.needs = defaults.needs;
+    if (!gameState.player) gameState.player = defaults.player;
+    if (!gameState.buildings) gameState.buildings = defaults.buildings;
+    if (!gameState.inventory) gameState.inventory = {};
+    if (!gameState.tools) gameState.tools = [];
+    if (!gameState.lastUpdate) gameState.lastUpdate = Date.now();
 
     // Urlaubsjahr prüfen und ggf. zurücksetzen
     const currentYear = new Date().getFullYear();
@@ -237,6 +262,21 @@ export function loadGame(userId) {
     if (!gameState.eggReceivedFrom) {
       gameState.eggReceivedFrom = [];
     }
+
+    // Migration: Fokus-Serie und Postkarten
+    if (!gameState.streak) gameState.streak = getDefaultStreak();
+    if (!gameState.postcards) gameState.postcards = [];
+
+    // Migration: Hütten-Innenraum
+    if (!gameState.interior || !Array.isArray(gameState.interior.furniture)) {
+      gameState.interior = { furniture: [] };
+    }
+
+    // Händler: nur die Käufe des heutigen Besuchstags behalten.
+    // Die IDs tragen den Tagesschlüssel, ältere Einträge wären nur Ballast.
+    const todayKey = merchantDayKey();
+    gameState.merchantTraded = (gameState.merchantTraded || [])
+      .filter(id => typeof id === 'string' && id.startsWith(todayKey));
 
     // Migration: Neue Stats-Flags
     if (gameState.stats.hasMainTreeFelled === undefined) {
@@ -323,6 +363,12 @@ export function resetGame(userId) {
   // Errungenschaften beibehalten
   const achievementsData = oldState?.achievements || { unlockedIds: [], lastUnlocked: null, lastUnlockedAt: null };
 
+  // Fokus-Serie und Postkarten hängen an der Person, nicht an der Insel —
+  // sie überleben den Tod. Die Hütteneinrichtung dagegen nicht: sie gehört
+  // zum Haus, und das steht nach einem Neuanfang nicht mehr.
+  const streakData = oldState?.streak || getDefaultStreak();
+  const postcardData = Array.isArray(oldState?.postcards) ? oldState.postcards : [];
+
   // Tode zählen (überlebt den Tod)
   const totalDeaths = (oldState?.stats?.totalDeaths || 0) + 1;
 
@@ -342,6 +388,8 @@ export function resetGame(userId) {
   newState.hobbyDiary = hobbyDiaryData;
   newState.hobby = null;
   newState.achievements = achievementsData;
+  newState.streak = streakData;
+  newState.postcards = postcardData;
   newState.stats.totalDeaths = totalDeaths;
   // eggReceivedFrom wird zurückgesetzt → nach dem Tod kann man erneut Eier erhalten
 
@@ -404,6 +452,24 @@ export async function loadGameWithCloud(userId) {
 function applyMigrations(gameState) {
   if (!gameState) return null;
   const gs = { ...gameState };
+
+  // Pflichtfelder absichern (siehe gleiche Absicherung in loadGame):
+  // Ein Cloud-Spielstand ohne diese Felder ließ die App beim ersten
+  // Zugriff auf state.vacation.isActive abstürzen.
+  const defaults = getDefaultGameState();
+  if (!gs.vacation) gs.vacation = defaults.vacation;
+  if (!gs.stats) gs.stats = defaults.stats;
+  if (!gs.needs) gs.needs = defaults.needs;
+  if (!gs.player) gs.player = defaults.player;
+  if (!gs.buildings) gs.buildings = defaults.buildings;
+  if (!gs.inventory) gs.inventory = {};
+  if (!gs.tools) gs.tools = [];
+  if (!gs.lastUpdate) gs.lastUpdate = Date.now();
+  if (!gs.streak) gs.streak = defaults.streak;
+  if (!gs.postcards) gs.postcards = [];
+  if (!gs.interior || !Array.isArray(gs.interior.furniture)) {
+    gs.interior = { furniture: [] };
+  }
 
   // Urlaubsjahr prüfen
   const currentYear = new Date().getFullYear();

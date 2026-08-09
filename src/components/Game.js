@@ -34,6 +34,15 @@ import VisitRequestPopup from './VisitRequestPopup';
 import VisitOverlay from './VisitOverlay';
 import TradeWindow from './TradeWindow';
 import MessageBadge from './MessageBadge';
+import PostcardDialog from './PostcardDialog';
+import FishingDialog from './FishingDialog';
+import MerchantDialog from './MerchantDialog';
+import HutInterior from './HutInterior';
+import {
+  hasInterior, furnitureById, getRoom, canPlace, canAffordFurniture,
+} from '../systems/InteriorSystem';
+import { FISHING_DURABILITY_COST } from '../systems/FishingSystem';
+import { isMerchantHere, MERCHANT_TILE, canAfford } from '../systems/MerchantSystem';
 import { useMultiplayer } from '../contexts/MultiplayerContext';
 import { createHostSnapshot } from '../systems/VisitSystem';
 import { executeTradeForPlayer } from '../systems/TradeSystem';
@@ -56,6 +65,10 @@ import { createCat, petCat, feedCat, canPetCat } from '../systems/CatSystem';
 import { checkAchievements, applyAchievements } from '../systems/AchievementSystem';
 import { useAuth } from '../contexts/AuthContext';
 import items from '../data/items';
+import { addItem, removeItem } from '../systems/InventorySystem';
+import { recordSession } from '../systems/StreakSystem';
+import * as Sound from '../systems/AudioSystem';
+import { getAtmosphere } from '../render/atmosphere';
 import { PLAYER_SPEED, TILE_SIZE, TILE_TYPES } from '../utils/constants';
 import homeMap, { EXIT_ZONES, TREE_POSITION } from '../data/homeMap';
 import { COLLISION_TILES, MAP_COLS, MAP_ROWS } from '../utils/constants';
@@ -92,6 +105,15 @@ export default function Game() {
   const [toolbarExpanded, setToolbarExpanded] = useState(false);
   const [topBarExpanded, setTopBarExpanded] = useState(false);
 
+  // Ton-Einstellungen überleben Neustarts (bewusst getrennt vom Spielstand:
+  // sie gehören zum Gerät, nicht zur Figur)
+  const [soundOn, setSoundOn] = useState(() => localStorage.getItem('si-sound') !== 'off');
+  const [musicOn, setMusicOn] = useState(() => localStorage.getItem('si-music') !== 'off');
+  const [showPostcard, setShowPostcard] = useState(false);
+  const [showFishing, setShowFishing] = useState(false);
+  const [showMerchant, setShowMerchant] = useState(false);
+  const [showInterior, setShowInterior] = useState(false);
+
   // Platzierungsmodus: { type: 'shelter'|'campfire'|'water_collector', level?: number, pendingIngredients?: [] }
   const [placementMode, setPlacementMode] = useState(null);
   // Ghost-Position für Vorschau: { type, col, row, level? }
@@ -120,6 +142,19 @@ export default function Game() {
   const moveInterval = useRef(null);
   const gameStateRef = useRef(null);
   const tradeCompleteRef = useRef(null);
+  // Serien-Meilenstein wird im State-Updater gesetzt und erst danach als
+  // Toast gezeigt — Seiteneffekte gehören nicht in einen Updater.
+  const pendingMilestoneRef = useRef(null);
+
+  const flushMilestone = useCallback(() => {
+    const m = pendingMilestoneRef.current;
+    if (!m) return;
+    pendingMilestoneRef.current = null;
+    setGameToast({
+      emoji: '🏮',
+      message: `${m} Tage in Folge! Eine weitere Laterne leuchtet auf der Insel.`,
+    });
+  }, []);
 
   // Ref synchron halten
   useEffect(() => {
@@ -155,6 +190,62 @@ export default function Game() {
     }, 30000);
     return () => clearInterval(interval);
   }, [isDead, setGameState]);
+
+  // --- Ton: erst nach der ersten Nutzerinteraktion starten ---
+  // Browser blockieren Audio ohne Geste. Deshalb hängt der Aufbau des
+  // Audiographen an einem einmaligen Listener.
+  useEffect(() => {
+    const start = () => {
+      if (soundOn) Sound.unlock();
+      window.removeEventListener('pointerdown', start);
+      window.removeEventListener('keydown', start);
+    };
+    window.addEventListener('pointerdown', start);
+    window.addEventListener('keydown', start);
+    return () => {
+      window.removeEventListener('pointerdown', start);
+      window.removeEventListener('keydown', start);
+    };
+  }, [soundOn]);
+
+  // Ton-Schalter durchreichen
+  useEffect(() => {
+    localStorage.setItem('si-sound', soundOn ? 'on' : 'off');
+    Sound.setEnabled(soundOn);
+    if (soundOn) Sound.unlock();
+  }, [soundOn]);
+
+  useEffect(() => {
+    localStorage.setItem('si-music', musicOn ? 'on' : 'off');
+    Sound.setMusicEnabled(musicOn);
+  }, [musicOn]);
+
+  // Klangkulisse an Tageszeit, Wetter und Lagerfeuer-Nähe anpassen
+  useEffect(() => {
+    const id = setInterval(() => {
+      const gs = gameStateRef.current;
+      if (!gs) return;
+      const atmo = getAtmosphere(new Date(), gs.timeOverride ?? null);
+
+      // Wie nah steht die Spielerin an einem brennenden Lagerfeuer?
+      let nearFire = 0;
+      for (const b of gs.placedBuildings || []) {
+        if (b.type !== 'campfire') continue;
+        const fx = b.col * TILE_SIZE + TILE_SIZE / 2;
+        const fy = b.row * TILE_SIZE + TILE_SIZE / 2;
+        const d = Math.hypot(gs.player.x - fx, gs.player.y - fy);
+        nearFire = Math.max(nearFire, Math.max(0, 1 - d / 180));
+      }
+
+      Sound.setScene({
+        sunAlt: atmo.sunAlt,
+        season: atmo.season,
+        weather: gs.weather,
+        nearFire,
+      });
+    }, 2000);
+    return () => clearInterval(id);
+  }, []);
 
   // iOS: Seiten-Zoom komplett verhindern (gesturestart/gesturechange + touchmove mit 2+ Fingern)
   useEffect(() => {
@@ -449,15 +540,22 @@ export default function Game() {
         e.preventDefault();
         keysPressed.current.add(key);
       }
-      // Shortcuts (nicht im Platzierungsmodus)
-      if (!placementMode) {
+      // Shortcuts (nicht im Platzierungsmodus, nicht im Innenraum —
+      // der hat eigene Tasten und liegt als Vollbild darüber)
+      if (!placementMode && !showInterior) {
         if (key === 'i') setShowInventory(v => !v);
         if (key === 'c') setShowCrafting(v => !v);
         if (key === 's') setShowShop(v => !v);
         if (key === 'h') setShowHobby(v => !v);
         if (key === 't') setShowDiary(v => !v);
         if (key === 'e') setShowAchievements(v => !v);
+        if (key === 'p') setShowPostcard(v => !v);
+        if (key === 'm') setSoundOn(v => !v);
         if (key === 'f' && user) setShowFriends(v => !v);
+        // U wie Unterkunft — H ist schon für das Hobby vergeben
+        if (key === 'u' && hasInterior(gameStateRef.current?.buildings?.shelterLevel)) {
+          setShowInterior(v => !v);
+        }
       }
     };
 
@@ -473,7 +571,7 @@ export default function Game() {
       window.removeEventListener('keyup', handleKeyUp);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [placementMode, placementConfirm]);
+  }, [placementMode, placementConfirm, showInterior]);
 
   // Bewegungs-Loop (WASD + Click-to-Walk) - läuft einmalig, liest Keys über Ref
   useEffect(() => {
@@ -895,11 +993,15 @@ export default function Game() {
         };
       }
 
-      return { ...prev, hobby: null, needs: newNeeds, hobbyDiary: newHobbyDiary };
+      // Fokus-Serie: der Tag zählt (nur die erste Sitzung pro Tag)
+      const { streak, milestone } = recordSession(prev.streak);
+      if (milestone) pendingMilestoneRef.current = milestone;
+
+      return { ...prev, hobby: null, needs: newNeeds, hobbyDiary: newHobbyDiary, streak };
     });
 
-    setTimeout(() => { manualSave(); checkAndApplyAchievements(); }, 0);
-  }, [setGameState, manualSave, checkAndApplyAchievements]);
+    setTimeout(() => { manualSave(); checkAndApplyAchievements(); flushMilestone(); }, 0);
+  }, [setGameState, manualSave, checkAndApplyAchievements, flushMilestone]);
 
   // --- Multiplayer: Trade abschliessen (beide Seiten) ---
   const handleTradeComplete = useCallback((trade) => {
@@ -944,6 +1046,24 @@ export default function Game() {
         setShowHobby(true);
         return;
       }
+    }
+
+    // Klick auf den Händlerstand
+    if (!placementMode && !isVisitor && isMerchantHere()
+        && Math.abs(col - MERCHANT_TILE.col) <= 1 && Math.abs(row - MERCHANT_TILE.row) <= 1) {
+      setShowMerchant(true);
+      return;
+    }
+
+    // Klick aufs Wasser: angeln — aber nur, wenn die Figur nah genug am Ufer steht
+    if (!placementMode && !isVisitor && homeMap[row]?.[col] === TILE_TYPES.WATER) {
+      const dist = Math.hypot(worldX - gameState.player.x, worldY - gameState.player.y);
+      if (dist <= 3.2 * TILE_SIZE) {
+        setShowFishing(true);
+      } else {
+        setGameToast({ emoji: '🎣', message: 'Zu weit weg — geh näher ans Ufer.' });
+      }
+      return;
     }
 
     // Im Platzierungsmodus: Gebäude, Baum oder Blume platzieren (nicht als Besucher)
@@ -1082,7 +1202,15 @@ export default function Game() {
     const clickedBuildingIdx = placed.findIndex(b => b.col === col && b.row === row);
     if (clickedBuildingIdx >= 0) {
       const building = placed[clickedBuildingIdx];
-      setDemolishConfirm({ ...building, index: clickedBuildingIdx });
+      // Ein Haus betritt man, statt es sofort abzureißen — der Abriss
+      // steckt drinnen in der Fußleiste. Der offene Windschutz (Level 1)
+      // hat kein Inneres, da bleibt es beim Abriss-Dialog.
+      const level = building.level || gameState.buildings?.shelterLevel || 0;
+      if (building.type === 'shelter' && hasInterior(level)) {
+        setShowInterior(true);
+      } else {
+        setDemolishConfirm({ ...building, index: clickedBuildingIdx });
+      }
       return;
     }
 
@@ -1203,16 +1331,97 @@ export default function Game() {
           break;
       }
 
+      // Einrichtung an den neuen Raum anpassen: Was nicht mehr hineinpasst
+      // (oder gar kein Haus mehr hat), verschwindet mit dem Gebäude.
+      let newInterior = prev.interior || { furniture: [] };
+      if (demolishConfirm.type === 'shelter') {
+        const room = getRoom(newBuildings.shelterLevel);
+        newInterior = {
+          furniture: room
+            ? (newInterior.furniture || []).filter(f => {
+              const def = furnitureById(f.id);
+              return def
+                && newBuildings.shelterLevel >= def.minLevel
+                && f.col + def.w <= room.cols
+                && f.row + def.h <= room.rows;
+            })
+            : [],
+        };
+      }
+
       return {
         ...prev,
         placedBuildings: newPlaced,
         buildings: newBuildings,
+        interior: newInterior,
       };
     });
 
     setDemolishConfirm(null);
+    setShowInterior(false);
     setTimeout(() => manualSave(), 0);
   }, [demolishConfirm, setGameState, manualSave]);
+
+  // --- Hütten-Innenraum -------------------------------------------------
+
+  // Möbelstück bauen und hinstellen (Rohstoffe werden sofort verbraucht)
+  const handlePlaceFurniture = useCallback((defId, col, row) => {
+    const def = furnitureById(defId);
+    if (!def) return;
+
+    setGameState(prev => {
+      const room = getRoom(prev.buildings?.shelterLevel || 0);
+      const list = prev.interior?.furniture || [];
+      if (!room || !canPlace(list, def, col, row, room)) return prev;
+      if (!canAffordFurniture(def, prev.inventory)) return prev;
+
+      let inventory = prev.inventory;
+      for (const [id, amount] of Object.entries(def.cost)) {
+        inventory = removeItem(inventory, id, amount);
+      }
+
+      return {
+        ...prev,
+        inventory,
+        interior: { ...prev.interior, furniture: [...list, { id: def.id, col, row }] },
+      };
+    });
+    setTimeout(() => { manualSave(); checkAndApplyAchievements(); }, 0);
+  }, [setGameState, manualSave, checkAndApplyAchievements]);
+
+  // Möbelstück abbauen — das Material kommt vollständig zurück.
+  // Umstellen soll nichts kosten, sonst traut sich niemand zu experimentieren.
+  const handleRemoveFurniture = useCallback((index) => {
+    setGameState(prev => {
+      const list = prev.interior?.furniture || [];
+      const entry = list[index];
+      const def = entry && furnitureById(entry.id);
+      if (!def) return prev;
+
+      let inventory = prev.inventory;
+      const now = Date.now();
+      for (const [id, amount] of Object.entries(def.cost)) {
+        inventory = addItem(inventory, id, amount, now);
+      }
+
+      const next = [...list];
+      next.splice(index, 1);
+      return { ...prev, inventory, interior: { ...prev.interior, furniture: next } };
+    });
+    setTimeout(() => manualSave(), 0);
+  }, [setGameState, manualSave]);
+
+  // „Hütte abreißen" aus dem Innenraum heraus
+  const handleDemolishFromInterior = useCallback(() => {
+    const placed = gameState?.placedBuildings || [];
+    const idx = placed.findIndex(
+      b => b.type === 'shelter'
+        && (b.level || 0) === (gameState.buildings?.shelterLevel || 0)
+    );
+    if (idx < 0) return;
+    setShowInterior(false);
+    setDemolishConfirm({ ...placed[idx], index: idx });
+  }, [gameState]);
 
   // Tier/Katze wegschicken - Doppel-Bestätigung starten
   const handleStartDismiss = useCallback((animal) => {
@@ -1428,15 +1637,9 @@ export default function Game() {
       lootResult = result;
 
       // Items ins Inventar
-      const newInventory = { ...prev.inventory };
+      let newInventory = prev.inventory;
       for (const item of result.items) {
-        if (!newInventory[item.itemId]) {
-          newInventory[item.itemId] = { amount: 0, collectedAt: Date.now() };
-        }
-        newInventory[item.itemId] = {
-          ...newInventory[item.itemId],
-          amount: newInventory[item.itemId].amount + item.amount,
-        };
+        newInventory = addItem(newInventory, item.itemId, item.amount);
       }
 
       // Werkzeug-Haltbarkeit reduzieren
@@ -1496,6 +1699,10 @@ export default function Game() {
         };
       }
 
+      // Fokus-Serie: der Tag zählt (nur die erste Sitzung pro Tag)
+      const { streak, milestone } = recordSession(prev.streak);
+      if (milestone) pendingMilestoneRef.current = milestone;
+
       return {
         ...prev,
         gathering: null,
@@ -1505,6 +1712,7 @@ export default function Game() {
         animals: newAnimals,
         biomeVisits: newBiomeVisits,
         diary: newDiary,
+        streak,
         stats: {
           ...prev.stats,
           totalItemsCollected: prev.stats.totalItemsCollected + totalNew,
@@ -1520,8 +1728,9 @@ export default function Game() {
       }
       manualSave(); // Sofort speichern nach Loot
       checkAndApplyAchievements();
+      flushMilestone();
     }, 0);
-  }, [setGameState, setShowLoot, manualSave, checkAndApplyAchievements]);
+  }, [setGameState, setShowLoot, manualSave, checkAndApplyAchievements, flushMilestone]);
 
   // Urlaub ändern
   const handleVacationChange = useCallback((newVacation) => {
@@ -1569,15 +1778,7 @@ export default function Game() {
   // Cheat: Item ins Inventar legen
   const handleCheatAddItem = useCallback((itemId, amount) => {
     setGameState(prev => {
-      const newInventory = { ...prev.inventory };
-      if (!newInventory[itemId]) {
-        newInventory[itemId] = { amount: 0, collectedAt: Date.now() };
-      }
-      newInventory[itemId] = {
-        ...newInventory[itemId],
-        amount: newInventory[itemId].amount + amount,
-      };
-      return { ...prev, inventory: newInventory };
+      return { ...prev, inventory: addItem(prev.inventory, itemId, amount) };
     });
     setTimeout(() => manualSave(), 0); // Sofort speichern nach Cheat
   }, [setGameState, manualSave]);
@@ -1716,6 +1917,13 @@ export default function Game() {
         },
       }));
       setTimeout(() => manualSave(), 0);
+    } else if (command.type === 'set_time') {
+      // Tageszeit einfrieren (null = wieder echte Uhrzeit)
+      setGameState(prev => ({
+        ...prev,
+        timeOverride: command.value,
+      }));
+      setTimeout(() => manualSave(), 0);
     } else if (command.type === 'show_list') {
       // Cheat-Liste anzeigen
       setShowCheatList(true);
@@ -1815,6 +2023,8 @@ export default function Game() {
               ? gameState.diary?.topics?.find(t => t.id === gameState.gathering.topicId)?.name
               : null
           }
+          weather={gameState.weather}
+          timeOverride={gameState.timeOverride ?? null}
           onPause={handlePauseGathering}
           onResume={handleResumeGathering}
           onCancel={handleFinishGathering}
@@ -1847,7 +2057,11 @@ export default function Game() {
               style={styles.topLeft}
               onClick={() => setTopBarExpanded(!topBarExpanded)}
             >
-              <WeatherDisplay weather={gameState.weather} />
+              <WeatherDisplay
+                weather={gameState.weather}
+                shelterLevel={gameState.buildings?.shelterLevel || 0}
+                timeOverride={gameState.timeOverride ?? null}
+              />
               <span style={styles.toggleArrow}>{topBarExpanded ? '▲' : '▼'}</span>
             </div>
             {topBarExpanded && (
@@ -1920,7 +2134,7 @@ export default function Game() {
                 style={styles.bottomBarToggle}
                 onClick={() => setToolbarExpanded(!toolbarExpanded)}
               >
-                <span style={{ fontSize: '16px' }}>🎒🔨📖🏆📊{user ? '👥' : ''}{isAdmin ? '🔧' : ''}</span>
+                <span style={{ fontSize: '16px' }}>🎒🔨📖🏆📊📮{user ? '👥' : ''}{isAdmin ? '🔧' : ''}</span>
                 <span style={styles.toggleArrow}>{toolbarExpanded ? '▼' : '▲'}</span>
               </div>
               {toolbarExpanded && (
@@ -1932,6 +2146,40 @@ export default function Game() {
                     <span style={styles.btnIcon}>🎒</span>
                     <span style={styles.btnLabel}>Inventar</span>
                     <span style={styles.btnHint}>[I]</span>
+                  </button>
+                  {hasInterior(gameState.buildings?.shelterLevel) && (
+                    <button
+                      style={{ ...styles.actionBtn, borderColor: 'rgba(224,178,104,0.5)' }}
+                      onClick={() => setShowInterior(true)}
+                    >
+                      <span style={styles.btnIcon}>🏠</span>
+                      <span style={styles.btnLabel}>Hütte</span>
+                      <span style={styles.btnHint}>[U]</span>
+                    </button>
+                  )}
+                  <button
+                    style={{ ...styles.actionBtn, borderColor: 'rgba(255,206,124,0.45)' }}
+                    onClick={() => setShowPostcard(true)}
+                  >
+                    <span style={styles.btnIcon}>📮</span>
+                    <span style={styles.btnLabel}>Postkarte</span>
+                    <span style={styles.btnHint}>[P]</span>
+                  </button>
+                  <button
+                    style={{ ...styles.actionBtn, borderColor: 'rgba(160,200,255,0.35)' }}
+                    onClick={() => setSoundOn(v => !v)}
+                  >
+                    <span style={styles.btnIcon}>{soundOn ? '🔊' : '🔇'}</span>
+                    <span style={styles.btnLabel}>Ton</span>
+                    <span style={styles.btnHint}>{soundOn ? 'an' : 'aus'}</span>
+                  </button>
+                  <button
+                    style={{ ...styles.actionBtn, borderColor: 'rgba(200,170,255,0.35)' }}
+                    onClick={() => setMusicOn(v => !v)}
+                  >
+                    <span style={styles.btnIcon}>{musicOn ? '🎵' : '🚫'}</span>
+                    <span style={styles.btnLabel}>Musik</span>
+                    <span style={styles.btnHint}>{musicOn ? 'an' : 'aus'}</span>
                   </button>
                   <button
                     style={styles.actionBtn}
@@ -2104,6 +2352,77 @@ export default function Game() {
         />
       )}
 
+      {showMerchant && (
+        <MerchantDialog
+          gameState={gameState}
+          onClose={() => setShowMerchant(false)}
+          onTrade={(offer) => {
+            setGameState(prev => {
+              if (!canAfford(offer, prev.inventory)) return prev;
+              let inv = prev.inventory;
+              for (const g of offer.give) inv = removeItem(inv, g.id, g.amount);
+              inv = addItem(inv, offer.get.id, offer.get.amount);
+              return {
+                ...prev,
+                inventory: inv,
+                // Jedes Angebot gilt einmal pro Besuchstag
+                merchantTraded: [...(prev.merchantTraded || []), offer.id],
+              };
+            });
+            setGameToast({ emoji: '🤝', message: `${offer.get.amount}× ${offer.getName} eingetauscht.` });
+            setTimeout(() => { manualSave(); checkAndApplyAchievements(); }, 0);
+          }}
+        />
+      )}
+
+      {showFishing && (
+        <FishingDialog
+          gameState={gameState}
+          onClose={() => setShowFishing(false)}
+          onCatch={(result, moodGain) => {
+            setGameState(prev => ({
+              ...prev,
+              inventory: addItem(prev.inventory, result.itemId, result.amount),
+              needs: { ...prev.needs, mood: Math.min(100, prev.needs.mood + moodGain) },
+              // Angel nutzt sich ab wie jedes andere Werkzeug
+              tools: (prev.tools || []).map(t =>
+                t.toolType === 'fishing_rod' && t.durability > 0
+                  ? { ...t, durability: Math.max(0, t.durability - FISHING_DURABILITY_COST) }
+                  : t
+              ).filter(t => t.durability === undefined || t.durability > 0),
+            }));
+            setTimeout(() => { manualSave(); checkAndApplyAchievements(); }, 0);
+          }}
+        />
+      )}
+
+      {showPostcard && (
+        <PostcardDialog
+          gameState={gameState}
+          onClose={() => setShowPostcard(false)}
+          onSave={(card) => {
+            setGameState(prev => ({
+              ...prev,
+              // Galerie auf 24 Karten begrenzen, damit der Spielstand
+              // nicht unbegrenzt wächst
+              postcards: [card, ...(prev.postcards || [])].slice(0, 24),
+            }));
+            setTimeout(() => manualSave(), 0);
+          }}
+        />
+      )}
+
+      {/* Hütten-Innenraum — nur solange es ein Haus gibt */}
+      {showInterior && hasInterior(gameState.buildings?.shelterLevel) && (
+        <HutInterior
+          gameState={gameState}
+          onClose={() => setShowInterior(false)}
+          onPlace={handlePlaceFurniture}
+          onRemove={handleRemoveFurniture}
+          onDemolish={handleDemolishFromInterior}
+        />
+      )}
+
       {/* Achievement-Toast */}
       {achievementToast && (
         <AchievementToast
@@ -2126,6 +2445,12 @@ export default function Game() {
           building={demolishConfirm}
           onConfirm={handleDemolish}
           onCancel={() => setDemolishConfirm(null)}
+          extraWarning={
+            demolishConfirm.type === 'shelter'
+              && (gameState?.interior?.furniture || []).length > 0
+              ? `Die Einrichtung (${gameState.interior.furniture.length} Stück) geht mit verloren.`
+              : null
+          }
         />
       )}
 

@@ -4,13 +4,36 @@
 
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import {
-  TILE_SIZE, MAP_COLS, MAP_ROWS, MAP_WIDTH, MAP_HEIGHT,
-  TILE_COLORS, TILE_TYPES,
+  TILE_SIZE, MAP_COLS, MAP_ROWS, MAP_WIDTH, MAP_HEIGHT, TILE_TYPES,
 } from '../utils/constants';
 import homeMap, { TREE_POSITION } from '../data/homeMap';
 import { ANIMAL_TYPES, ANIMAL_HUNGER_MAX } from '../systems/AnimalSystem';
 import { getCatStage, CAT_AFFECTION_MAX } from '../systems/CatSystem';
 import { FLOWER_TYPES, getFlowerGrowth, getFlowerStage, isFlowerBlooming } from '../systems/FlowerSystem';
+import { isWaterCollectorActive } from '../systems/NeedsSystem';
+// --- Render-Engine ---
+import { getTerrain, getWaterMask } from '../render/terrain';
+import {
+  getTreeSprite, getBushSprite, treeJitter,
+  TREE_W, TREE_H, TREE_ANCHOR_X, TREE_ANCHOR_Y, BUSH_W, BUSH_H,
+} from '../render/treeSprites';
+import { getGrowthTree, treeVariant } from '../render/treeGrowth';
+import { getShelterSprite, getCollectorSprite, BUILD_ANCHOR_X, BUILD_ANCHOR_Y } from '../render/buildingSprites';
+import { getAnimalSprite, A_W, A_GROUND } from '../render/animalSprites';
+import { drawChronicle } from '../render/treeChronicle';
+import { drawLanternPath } from '../render/lanterns';
+import { activeLanterns } from '../systems/StreakSystem';
+import { isMerchantHere, MERCHANT_TILE } from '../systems/MerchantSystem';
+import { getMerchantSprite, drawMerchantPennants, M_ANCHOR_X, M_ANCHOR_Y } from '../render/merchantSprite';
+import { getAtmosphere, applyWeather } from '../render/atmosphere';
+import { applyLighting, dropShadow, contactShadow } from '../render/lighting';
+import { windStrength, sway } from '../render/wind';
+import {
+  drawButterflies, drawFireflies, drawMotes, drawFallingLeaves,
+  drawRain, drawSplashes, drawStars, drawWetSheen,
+  drawSnow, drawLightning, drawHeatHaze, drawFogBanks,
+} from '../render/particles';
+import { hash2, valueNoise } from '../render/noise';
 
 export default function GameCanvas({ gameState, onMapClick, onMouseMove, placementGhost, canvasSize, visitorPosition, visitorName, visitMode, hostSnapshot }) {
   const canvasRef = useRef(null);
@@ -32,6 +55,15 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
   // Refs für Draw-Funktionen: werden nach jeder useCallback-Änderung aktualisiert,
   // aber der Render-Loop liest nur aus Refs → kein RAF-Neustart nötig
   const drawFnsRef = useRef({});
+
+  // Aktueller Lichtzustand — von der Uhr im HUD ausgelesen
+  const atmoRef = useRef(null);
+  // Laternen der Baum-Chronik melden hier ihre Lichtpositionen für den Licht-Pass
+  const chronicleLightsRef = useRef([]);
+  // Blickrichtung der Spielerin (1 = nach rechts), bleibt beim Stehenbleiben erhalten
+  const facingRef = useRef(1);
+  // Lichtquellen des Laternenwegs (Fokus-Serie)
+  const lanternLightsRef = useRef([]);
 
   // Pinch-to-Zoom: Zoom-Level (1.0 = Standard, rausgezoomt bis gesamte Map sichtbar)
   const [zoomLevel, setZoomLevel] = useState(1.0);
@@ -80,1085 +112,764 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
     return { x: offsetX, y: offsetY };
   }, [gameState, canvasSize, getScale]);
 
-  // Kachel zeichnen
-  const drawTile = useCallback((ctx, col, row, tileType, camera) => {
-    const x = col * TILE_SIZE + camera.x;
-    const y = row * TILE_SIZE + camera.y;
+  // ============================================
+  // Landschaft: gebackenes Terrain + animierte Oberflächen
+  // ============================================
 
-    // Basis-Farbe
-    ctx.fillStyle = TILE_COLORS[tileType] || TILE_COLORS[TILE_TYPES.GRASS];
-    ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+  // Das Terrain-Canvas wird einmal gebaut und danach nur noch geblittet.
+  const terrainRef = useRef(null);
+  const waterRef = useRef(null);
+  const getTerrainCanvas = () => {
+    if (!terrainRef.current) terrainRef.current = getTerrain(homeMap, 'home', 20240);
+    return terrainRef.current;
+  };
+  const getWaterCells = () => {
+    if (!waterRef.current) waterRef.current = getWaterMask(homeMap, 'home', 20240);
+    return waterRef.current;
+  };
 
-    // Kacheldetails
-    // Deterministischer Pseudo-Zufall mit Bit-Mixing (keine linearen Muster)
-    const seed = col * 7919 + row * 6271;
-    const rand = (i) => {
-      let h = (seed + i * 48271) | 0;
-      h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
-      h = Math.imul(h ^ (h >>> 13), 0x45d9f3b);
-      h = (h ^ (h >>> 16)) >>> 0;
-      return h / 4294967295;
-    };
+  // Wasseroberfläche: Wellen, Glitzern und Spiegelung über dem
+  // gebackenen Grund. Nur das hier bewegt sich pro Frame.
+  const drawWaterSurface = useCallback((ctx, t, atmo) => {
+    const cells = getWaterCells();
+    if (!cells.length) return;
 
-    switch (tileType) {
-      case TILE_TYPES.TREE: {
-        // === Detaillierter Randbaum mit sichtbarem Stamm ===
-        const tcx = x + 32;
+    ctx.save();
 
-        // Bodenschatten (Ellipse unter dem Baum)
-        ctx.fillStyle = 'rgba(0,40,0,0.2)';
+    // Sanfte Wellenbänder
+    ctx.globalCompositeOperation = 'overlay';
+    for (const c of cells) {
+      const w1 = Math.sin(c.x * 0.05 + c.y * 0.028 + t * 1.5);
+      const w2 = Math.sin(c.x * 0.021 - c.y * 0.045 + t * 0.9);
+      const v = (w1 * 0.6 + w2 * 0.4) * 0.5 + 0.5;
+      ctx.fillStyle = `rgba(190,225,245,${0.05 + v * 0.11 * (1 - c.depth * 0.35)})`;
+      ctx.fillRect(c.x - 16, c.y - 16, 32, 32);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+
+    // Kaustik-Netz im Flachwasser
+    ctx.strokeStyle = `rgba(226,248,255,${0.13 + atmo.goldenness * 0.1})`;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    for (const c of cells) {
+      if (c.depth > 0.55) continue;
+      const ph = t * 1.1 + c.x * 0.02 + c.y * 0.015;
+      const r = 7 + Math.sin(ph) * 4;
+      ctx.moveTo(c.x + r, c.y);
+      ctx.ellipse(c.x, c.y, r, r * 0.42, Math.sin(ph * 0.6), 0, Math.PI * 2);
+    }
+    ctx.stroke();
+
+    // Glitzernde Sonnenreflexe auf der Wasseroberfläche
+    const sparkleAlpha = Math.max(0, atmo.sunAlt) * 0.9 + atmo.goldenness * 0.5;
+    if (sparkleAlpha > 0.03) {
+      for (let i = 0; i < cells.length; i += 2) {
+        const c = cells[i];
+        const ph = t * 2.4 + hash2(c.x | 0, c.y | 0, 61) * 30;
+        const s = Math.sin(ph);
+        if (s < 0.86) continue;
+        const a = (s - 0.86) / 0.14;
+        const r = 1.6 + a * 3.4;
+        ctx.fillStyle = `rgba(255,252,232,${a * sparkleAlpha})`;
         ctx.beginPath();
-        ctx.ellipse(tcx, y + 60, 24, 6, 0, 0, Math.PI * 2);
+        ctx.ellipse(c.x, c.y, r, r * 0.5, 0, 0, Math.PI * 2);
         ctx.fill();
-
-        // Wurzeln (sichtbar am Boden)
-        ctx.strokeStyle = '#4a2a10';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.moveTo(tcx - 5, y + 52);
-        ctx.quadraticCurveTo(x + 8, y + 58, x + 4, y + 63);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(tcx + 5, y + 52);
-        ctx.quadraticCurveTo(x + 52, y + 56, x + 58, y + 62);
-        ctx.stroke();
-        // Kleine Wurzel
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(tcx - 2, y + 54);
-        ctx.quadraticCurveTo(x + 18, y + 60, x + 14, y + 64);
-        ctx.stroke();
-
-        // Baumstamm (breit, konisch, deutlich sichtbar)
-        ctx.fillStyle = '#5c3a1e';
-        ctx.beginPath();
-        ctx.moveTo(tcx - 9, y + 56);   // Basis links (breit)
-        ctx.lineTo(tcx - 5, y + 22);    // Oben links (schmaler)
-        ctx.lineTo(tcx + 5, y + 22);    // Oben rechts
-        ctx.lineTo(tcx + 9, y + 56);    // Basis rechts
-        ctx.closePath();
-        ctx.fill();
-
-        // Rinden-Textur (vertikale + horizontale Linien)
-        ctx.strokeStyle = '#3a2210';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(tcx - 3, y + 54);
-        ctx.lineTo(tcx - 2, y + 26);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(tcx + 3, y + 52);
-        ctx.lineTo(tcx + 2, y + 28);
-        ctx.stroke();
-        // Horizontale Rinden-Ringe
-        ctx.strokeStyle = '#4a2a14';
-        ctx.lineWidth = 0.8;
-        for (let ri = 0; ri < 3; ri++) {
-          const ry = y + 30 + ri * 8;
-          const rw = 6 + (ri * 1.5);
-          ctx.beginPath();
-          ctx.moveTo(tcx - rw, ry);
-          ctx.quadraticCurveTo(tcx, ry + 1.5, tcx + rw, ry);
-          ctx.stroke();
-        }
-
-        // Hellerer Streifen (Licht auf Rinde)
-        ctx.fillStyle = 'rgba(120,80,40,0.25)';
-        ctx.beginPath();
-        ctx.moveTo(tcx + 1, y + 54);
-        ctx.lineTo(tcx + 3, y + 24);
-        ctx.lineTo(tcx + 6, y + 24);
-        ctx.lineTo(tcx + 7, y + 54);
-        ctx.closePath();
-        ctx.fill();
-
-        // Ast links
-        ctx.strokeStyle = '#4a2a12';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(tcx - 4, y + 30);
-        ctx.quadraticCurveTo(x + 10, y + 22, x + 6, y + 14);
-        ctx.stroke();
-        // Ast rechts
-        ctx.beginPath();
-        ctx.moveTo(tcx + 4, y + 26);
-        ctx.quadraticCurveTo(x + 50, y + 18, x + 56, y + 12);
-        ctx.stroke();
-
-        // Baumkrone (mehrere Schichten, versetzt nach oben)
-        // Schatten-Schicht (größte, dunkelste)
-        ctx.fillStyle = '#1a5a10';
-        ctx.beginPath();
-        ctx.arc(tcx, y + 20, 22, 0, Math.PI * 2);
-        ctx.fill();
-        // Hauptkrone
-        ctx.fillStyle = '#257218';
-        ctx.beginPath();
-        ctx.arc(tcx - 4, y + 14, 17, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(tcx + 8, y + 17, 14, 0, Math.PI * 2);
-        ctx.fill();
-        // Mittlere Schicht
-        ctx.fillStyle = '#2d8a20';
-        ctx.beginPath();
-        ctx.arc(tcx - 6, y + 10, 13, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(tcx + 6, y + 12, 11, 0, Math.PI * 2);
-        ctx.fill();
-        // Helle Akzente (Sonnenlicht oben)
-        ctx.fillStyle = '#3a9a2e';
-        ctx.beginPath();
-        ctx.arc(tcx - 2, y + 6, 9, 0, Math.PI * 2);
-        ctx.fill();
-        // Top-Highlight
-        ctx.fillStyle = '#4aaa38';
-        ctx.beginPath();
-        ctx.arc(tcx - 4, y + 4, 5, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Gelegentlich Beeren oder Äpfel
-        if (rand(0) > 0.5) {
-          ctx.fillStyle = '#d03030';
-          ctx.beginPath();
-          ctx.arc(x + 16 + rand(1) * 30, y + 10 + rand(2) * 16, 2.5, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        if (rand(5) > 0.7) {
-          ctx.fillStyle = '#c82828';
-          ctx.beginPath();
-          ctx.arc(x + 20 + rand(6) * 24, y + 16 + rand(7) * 10, 2, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        break;
       }
-
-      case TILE_TYPES.WATER: {
-        // Welleneffekt
-        ctx.fillStyle = '#4a8de5';
-        const time = Date.now() / 1000;
-        for (let i = 0; i < 3; i++) {
-          const waveY = y + 15 + i * 18 + Math.sin(time + col + i) * 3;
-          ctx.fillRect(x + 5, waveY, TILE_SIZE - 10, 2);
-        }
-        break;
-      }
-
-      case TILE_TYPES.BUSH:
-        // Busch
-        ctx.fillStyle = '#4a8c3f'; // Gras-Hintergrund
-        ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
-        ctx.fillStyle = '#3d8a2e';
-        ctx.beginPath();
-        ctx.arc(x + 32, y + 38, 18, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#2d7a1e';
-        ctx.beginPath();
-        ctx.arc(x + 26, y + 34, 12, 0, Math.PI * 2);
-        ctx.fill();
-        // Beeren
-        ctx.fillStyle = '#e03040';
-        ctx.beginPath(); ctx.arc(x + 38, y + 32, 3, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.arc(x + 28, y + 42, 3, 0, Math.PI * 2); ctx.fill();
-        break;
-
-      case TILE_TYPES.GRASS: {
-        // === Detaillierter Rasen ===
-        // Basis-Farbvariation pro Tile (natürliche Patches)
-        const shade = rand(0) * 0.1 - 0.05;
-        const gr = Math.round(74 + shade * 180);
-        const gg = Math.round(140 + shade * 180);
-        const gb = Math.round(63 + shade * 180);
-        ctx.fillStyle = `rgb(${gr},${gg},${gb})`;
-        ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
-
-        // Weiche Farbflecken (heller/dunkler Patches für Tiefe)
-        ctx.fillStyle = `rgba(${60 + Math.floor(rand(40) * 30)}, ${120 + Math.floor(rand(41) * 40)}, ${40 + Math.floor(rand(42) * 30)}, 0.3)`;
-        ctx.beginPath();
-        ctx.ellipse(x + 10 + rand(43) * 44, y + 10 + rand(44) * 44, 12 + rand(45) * 8, 8 + rand(46) * 6, rand(47) * Math.PI, 0, Math.PI * 2);
-        ctx.fill();
-        // Zweiter Patch
-        ctx.fillStyle = `rgba(${80 + Math.floor(rand(50) * 20)}, ${155 + Math.floor(rand(51) * 25)}, ${55 + Math.floor(rand(52) * 20)}, 0.25)`;
-        ctx.beginPath();
-        ctx.ellipse(x + 20 + rand(53) * 30, y + 20 + rand(54) * 30, 10 + rand(55) * 6, 7 + rand(56) * 4, rand(57) * Math.PI, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Grashalme (10-14 Stück pro Tile)
-        const bladeCount = 10 + Math.floor(rand(1) * 5);
-        for (let i = 0; i < bladeCount; i++) {
-          const bx = x + 3 + rand(i * 4 + 10) * 58;
-          const by = y + 12 + rand(i * 4 + 11) * 42;
-          const bh = 4 + rand(i * 4 + 12) * 8;
-          const lean = (rand(i * 4 + 13) - 0.5) * 5;
-          const greenVal = 130 + Math.floor(rand(i * 4 + 14) * 50);
-          // Halm
-          ctx.strokeStyle = `rgba(60, ${greenVal}, 35, 0.55)`;
-          ctx.lineWidth = 1.2;
-          ctx.beginPath();
-          ctx.moveTo(bx, by);
-          ctx.quadraticCurveTo(bx + lean * 0.5, by - bh * 0.5, bx + lean, by - bh);
-          ctx.stroke();
-        }
-
-        // Gras-Büschel (2-3 dichtere Stellen)
-        const tuftCount = 2 + Math.floor(rand(60) * 2);
-        for (let t = 0; t < tuftCount; t++) {
-          const tx2 = x + 8 + rand(t * 5 + 70) * 48;
-          const ty2 = y + 10 + rand(t * 5 + 71) * 44;
-          ctx.fillStyle = `rgba(55, ${140 + Math.floor(rand(t * 5 + 72) * 30)}, 40, 0.35)`;
-          ctx.beginPath();
-          ctx.ellipse(tx2, ty2, 4 + rand(t * 5 + 73) * 3, 2.5, rand(t * 5 + 74) * Math.PI, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Blumen (1-3 pro Tile, divers verteilt)
-        const flowerCount = 1 + Math.floor(rand(200) * 3);
-        for (let f = 0; f < flowerCount; f++) {
-          const base = 210 + f * 13;
-          // 40% Chance pro Slot, dass tatsächlich eine Blume erscheint
-          if (rand(base) > 0.6) continue;
-          const fx = x + 4 + rand(base + 1) * 54;
-          const fy = y + 4 + rand(base + 2) * 54;
-          const flowerType = rand(base + 3);
-
-          if (flowerType > 0.8) {
-            // Gänseblümchen (weiß mit gelbem Kern)
-            ctx.fillStyle = '#fff';
-            for (let p = 0; p < 5; p++) {
-              const angle = (p / 5) * Math.PI * 2 + rand(base + 4) * 0.5;
-              ctx.beginPath();
-              ctx.ellipse(fx + Math.cos(angle) * 3, fy + Math.sin(angle) * 3, 2, 1.2, angle, 0, Math.PI * 2);
-              ctx.fill();
-            }
-            ctx.fillStyle = '#f0d020';
-            ctx.beginPath();
-            ctx.arc(fx, fy, 1.8, 0, Math.PI * 2);
-            ctx.fill();
-          } else if (flowerType > 0.6) {
-            // Butterblume (gelb)
-            ctx.fillStyle = '#f0c020';
-            for (let p = 0; p < 4; p++) {
-              const angle = (p / 4) * Math.PI * 2 + rand(base + 5) * 0.3;
-              ctx.beginPath();
-              ctx.arc(fx + Math.cos(angle) * 2, fy + Math.sin(angle) * 2, 1.5, 0, Math.PI * 2);
-              ctx.fill();
-            }
-            ctx.fillStyle = '#e0a010';
-            ctx.beginPath();
-            ctx.arc(fx, fy, 1.2, 0, Math.PI * 2);
-            ctx.fill();
-          } else if (flowerType > 0.4) {
-            // Klee (3 kleine grüne Blätter)
-            ctx.fillStyle = '#3a8a28';
-            for (let p = 0; p < 3; p++) {
-              const angle = (p / 3) * Math.PI * 2 - Math.PI / 2;
-              ctx.beginPath();
-              ctx.ellipse(fx + Math.cos(angle) * 2.5, fy + Math.sin(angle) * 2.5, 2.5, 1.8, angle, 0, Math.PI * 2);
-              ctx.fill();
-            }
-            ctx.strokeStyle = '#2a6a18';
-            ctx.lineWidth = 0.8;
-            ctx.beginPath();
-            ctx.moveTo(fx, fy + 2);
-            ctx.lineTo(fx, fy + 6);
-            ctx.stroke();
-          } else if (flowerType > 0.2) {
-            // Lila Blume
-            ctx.fillStyle = '#9060c0';
-            for (let p = 0; p < 4; p++) {
-              const angle = (p / 4) * Math.PI * 2 + rand(base + 6) * 0.4;
-              ctx.beginPath();
-              ctx.arc(fx + Math.cos(angle) * 1.8, fy + Math.sin(angle) * 1.8, 1.3, 0, Math.PI * 2);
-              ctx.fill();
-            }
-            ctx.fillStyle = '#f0e060';
-            ctx.beginPath();
-            ctx.arc(fx, fy, 1, 0, Math.PI * 2);
-            ctx.fill();
-          } else {
-            // Rosa Blume
-            ctx.fillStyle = '#c06090';
-            for (let p = 0; p < 5; p++) {
-              const angle = (p / 5) * Math.PI * 2 + rand(base + 7) * 0.3;
-              ctx.beginPath();
-              ctx.arc(fx + Math.cos(angle) * 2, fy + Math.sin(angle) * 2, 1.4, 0, Math.PI * 2);
-              ctx.fill();
-            }
-            ctx.fillStyle = '#f0d0e0';
-            ctx.beginPath();
-            ctx.arc(fx, fy, 1.1, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
-
-        // Kleiner Stein (10% Chance)
-        if (rand(3) > 0.9) {
-          const sx2 = x + 12 + rand(30) * 40;
-          const sy2 = y + 14 + rand(31) * 36;
-          ctx.fillStyle = '#7a7a6a';
-          ctx.beginPath();
-          ctx.ellipse(sx2, sy2, 3.5, 2, rand(32) * Math.PI, 0, Math.PI * 2);
-          ctx.fill();
-          // Highlight
-          ctx.fillStyle = '#9a9a88';
-          ctx.beginPath();
-          ctx.ellipse(sx2 - 0.5, sy2 - 0.5, 2, 1.2, rand(32) * Math.PI, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        break;
-      }
-
-      default:
-        break;
     }
 
-    // Gitterlinien (dezent)
-    ctx.strokeStyle = 'rgba(0,0,0,0.03)';
-    ctx.strokeRect(x, y, TILE_SIZE, TILE_SIZE);
+    // Uferschaum
+    ctx.strokeStyle = 'rgba(248,253,255,0.3)';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    for (const c of cells) {
+      if (c.depth > 0.14) continue;
+      const wob = Math.sin(t * 1.6 + c.x * 0.04) * 2.5;
+      ctx.moveTo(c.x - 12, c.y + wob);
+      ctx.quadraticCurveTo(c.x, c.y + wob + 3, c.x + 12, c.y + wob);
+    }
+    ctx.stroke();
+
+    ctx.restore();
   }, []);
 
-  // Spielerin zeichnen (blonde Frau, blau-gelb Gradient-Pulli, schwarze Leggings, barfuß)
+  // Regentropfen-Ringe auf dem Wasser
+  const drawWaterRain = useCallback((ctx, t) => {
+    const cells = getWaterCells();
+    ctx.strokeStyle = 'rgba(226,244,255,0.4)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < cells.length; i += 3) {
+      const c = cells[i];
+      const cycle = 0.7 + hash2(c.x | 0, c.y | 0, 83) * 0.6;
+      const p = ((t + hash2(c.x | 0, c.y | 0, 84) * cycle) % cycle) / cycle;
+      if (p > 0.6) continue;
+      const r = p * 13;
+      ctx.globalAlpha = (1 - p / 0.6) * 0.45;
+      ctx.beginPath();
+      ctx.ellipse(c.x, c.y, r, r * 0.4, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }, []);
+
+  // Schneedecke auf dem Boden. Liegt unter den Objekten, damit Bäume und
+  // Hütten oben drauf stehen — und lässt das Wasser frei, das friert
+  // stattdessen weiter unten in drawWaterSurface zu.
+  const drawSnowCover = useCallback((ctx, t) => {
+    ctx.save();
+
+    // Grundschicht: weiches Weiß über die ganze Insel
+    ctx.fillStyle = 'rgba(238,246,255,0.62)';
+    ctx.fillRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
+
+    // Verwehungen — dort, wo der Wind den Schnee zusammenschiebt
+    for (let i = 0; i < 90; i++) {
+      const dx = hash2(i, 1, 1201) * MAP_WIDTH;
+      const dy = hash2(i, 2, 1202) * MAP_HEIGHT;
+      const r = 26 + hash2(i, 3, 1203) * 58;
+      const g = ctx.createRadialGradient(dx, dy, 0, dx, dy, r);
+      g.addColorStop(0, 'rgba(255,255,255,0.5)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.ellipse(dx, dy, r, r * 0.55, hash2(i, 4, 1204) * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Frei geblasene Stellen, an denen Gras durchschaut
+    for (let i = 0; i < 40; i++) {
+      const bx = hash2(i, 5, 1205) * MAP_WIDTH;
+      const by = hash2(i, 6, 1206) * MAP_HEIGHT;
+      const r = 14 + hash2(i, 7, 1207) * 26;
+      const g = ctx.createRadialGradient(bx, by, 0, bx, by, r);
+      g.addColorStop(0, 'rgba(120,140,110,0.3)');
+      g.addColorStop(1, 'rgba(120,140,110,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.ellipse(bx, by, r, r * 0.6, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Funkelnde Eiskristalle
+    for (let i = 0; i < 120; i++) {
+      const sx = hash2(i, 8, 1208) * MAP_WIDTH;
+      const sy = hash2(i, 9, 1209) * MAP_HEIGHT;
+      const tw = Math.sin(t * 2.4 + i * 2.1);
+      if (tw < 0.9) continue;
+      ctx.fillStyle = `rgba(255,255,255,${(tw - 0.9) * 9})`;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 1.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }, []);
+
+  // Windwellen über der Wiese: helle Böen, die sichtbar über das Gras laufen
+  const drawWindRipples = useCallback((ctx, t, strength) => {
+    if (strength < 0.05) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'soft-light';
+
+    const bands = 5;
+    for (let b = 0; b < bands; b++) {
+      const speed = 90 + b * 34;
+      const offset = (t * speed + b * 431) % (MAP_WIDTH + 700) - 350;
+      const yBase = (b / bands) * MAP_HEIGHT + Math.sin(t * 0.3 + b) * 60;
+      const h = 130 + b * 45;
+      const a = (0.1 + valueNoise(t * 0.4 + b, 0, 91) * 0.16) * strength;
+
+      const g = ctx.createLinearGradient(offset, 0, offset + 300, 0);
+      g.addColorStop(0, 'rgba(255,255,240,0)');
+      g.addColorStop(0.5, `rgba(255,255,236,${a})`);
+      g.addColorStop(1, 'rgba(255,255,240,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(offset, yBase - h / 2, 300, h);
+    }
+    ctx.restore();
+  }, []);
+
+  // Randbäume und Büsche: Sprites mit Sonnenschatten und Windbewegung
+  //
+  // Die Krone ragt gut 130 px über den Stammfuß hinaus. In der obersten
+  // Kartenreihe läge sie damit außerhalb des Bildes — deshalb rutschen
+  // Bäume dort so weit nach unten, dass die Baumkronen sichtbar bleiben.
+  const floraAnchor = useCallback((col, row, tile) => {
+    const j = treeJitter(col, row);
+    const big = tile === TILE_TYPES.TREE;
+    let by = row * TILE_SIZE + TILE_SIZE - 6 + j.dy;
+    if (big) by = Math.max(by, (TREE_ANCHOR_Y - 24) * j.scale);
+    return { j, big, bx: col * TILE_SIZE + TILE_SIZE / 2 + j.dx, by };
+  }, []);
+
+  const drawEdgeFlora = useCallback((ctx, t, atmo, windAmt) => {
+    // 1. Durchgang: alle Schatten, damit keiner über einem Baum liegt
+    for (let row = 0; row < MAP_ROWS; row++) {
+      for (let col = 0; col < MAP_COLS; col++) {
+        const tile = homeMap[row][col];
+        if (tile !== TILE_TYPES.TREE && tile !== TILE_TYPES.BUSH) continue;
+        const { j, big, bx, by } = floraAnchor(col, row, tile);
+        dropShadow(ctx, bx, by, (big ? 46 : 27) * j.scale, (big ? 26 : 15) * j.scale, atmo, 1.5);
+        contactShadow(ctx, bx, by, (big ? 26 : 18) * j.scale, (big ? 9 : 6) * j.scale, 0.3);
+      }
+    }
+
+    // 2. Durchgang: die Pflanzen selbst, von hinten nach vorn
+    for (let row = 0; row < MAP_ROWS; row++) {
+      for (let col = 0; col < MAP_COLS; col++) {
+        const tile = homeMap[row][col];
+        if (tile !== TILE_TYPES.TREE && tile !== TILE_TYPES.BUSH) continue;
+
+        const { j, big, bx, by } = floraAnchor(col, row, tile);
+        const sprite = big ? getTreeSprite(col, row) : getBushSprite(col, row);
+        const w = big ? TREE_W : BUSH_W;
+        const h = big ? TREE_H : BUSH_H;
+        const ax = big ? TREE_ANCHOR_X : BUSH_W / 2;
+        const ay = big ? TREE_ANCHOR_Y : BUSH_H - 6;
+
+        // Der Stamm steht still, die Krone wiegt sich: leichte Scherung
+        const bend = sway(bx, by, t + j.phase, windAmt, big ? 2.6 : 1.8);
+
+        ctx.save();
+        ctx.translate(bx, by);
+        ctx.transform(1, 0, bend * 0.05, 1, 0, 0);
+        ctx.scale(j.flip ? -j.scale : j.scale, j.scale);
+        ctx.drawImage(sprite, -ax, -ay, w, h);
+        ctx.restore();
+      }
+    }
+  }, [floraAnchor]);
+
+  // ============================================
+  // Die Spielerin
+  // ============================================
+  // Etwas größer als vorher (die Umgebung hat deutlich an Detail gewonnen,
+  // eine 40-px-Strichfigur fiel dagegen ab), mit Stoffvolumen, Haarsträhnen,
+  // Blickrichtung und einer Laufanimation, die auch die Arme mitnimmt.
   const drawPlayer = useCallback((ctx, camera) => {
     if (!gameState) return;
 
     const px = gameState.player.x + camera.x;
     const py = gameState.player.y + camera.y;
+    const now = Date.now();
 
-    // Lauf-Animation
-    const isMoving = gameState.player.targetX !== undefined || gameState.player.moving;
-    const walkCycle = isMoving ? Math.sin(Date.now() / 120) : 0;
-    const legSwing = walkCycle * 5;
-    const kneeSwing = walkCycle * 2.5;
-    const armSwing = walkCycle * 4;
-    const bodyBob = Math.abs(walkCycle) * 1.5;
-    const bodyLean = isMoving ? 1.5 : 0; // Leichte Vorneigung beim Laufen
+    // --- Bewegung ---
+    const isMoving = !!gameState.player.moving;
+    const walk = isMoving ? Math.sin(now / 115) : 0;
+    const walk2 = isMoving ? Math.sin(now / 115 + Math.PI / 2) : 0;
+    const legSwing = walk * 6;
+    const kneeSwing = walk * 3;
+    const armSwing = walk * 5;
+    const bodyBob = Math.abs(walk) * 1.8;
+    const lean = isMoving ? 1.2 : 0;
 
-    // Basis-Koordinaten (Figur ist ~40px hoch, Mittelpunkt bei Hüfte)
-    const headY = py - 16 - bodyBob;
-    const neckY = py - 8 - bodyBob;
-    const shoulderY = py - 6 - bodyBob;
-    const waistY = py + 2 - bodyBob;
-    const hipY = py + 5 - bodyBob;
-    const kneeY = py + 13;
-    const feetY = py + 20;
+    // Blickrichtung merken: bestimmt, wohin Gesicht und Haare zeigen
+    const dx = (gameState.player.targetX ?? px) - px;
+    if (Math.abs(dx) > 1.5) facingRef.current = dx > 0 ? 1 : -1;
+    const face = facingRef.current;
 
-    // Schatten (wird größer/kleiner mit Bewegung)
-    const shadowScale = isMoving ? 0.85 : 1;
-    ctx.fillStyle = 'rgba(0,0,0,0.18)';
-    ctx.beginPath();
-    ctx.ellipse(px + bodyLean, feetY + 2, 11 * shadowScale, 4 * shadowScale, 0, 0, Math.PI * 2);
-    ctx.fill();
+    // Ruhiges Atmen im Stand
+    const breathe = isMoving ? 0 : Math.sin(now / 1400) * 0.5;
 
-    // === Haare hinten (Langhaar, fällt über Rücken) ===
-    ctx.fillStyle = '#E8C84A';
-    ctx.beginPath();
-    ctx.ellipse(px - 1, headY + 8, 7, 14, -0.05, 0, Math.PI * 2);
-    ctx.fill();
-    // Haarsträhnen-Highlight hinten
-    ctx.fillStyle = '#F5D76E';
-    ctx.beginPath();
-    ctx.ellipse(px + 1, headY + 6, 5, 11, 0.05, 0, Math.PI * 2);
-    ctx.fill();
+    // --- Körperachse ---
+    const S = 1.22;                       // Gesamtmaßstab
+    const headY = py - 20 * S - bodyBob + breathe;
+    const neckY = py - 11 * S - bodyBob + breathe;
+    const shoulderY = py - 8.5 * S - bodyBob + breathe;
+    const waistY = py + 1 * S - bodyBob;
+    const hipY = py + 5 * S - bodyBob;
+    const kneeY = py + 14 * S;
+    const feetY = py + 22 * S;
 
-    // === Beine (schwarze Leggings) ===
+    // --- Schatten ---
+    const atmo = atmoRef.current;
+    if (atmo) {
+      dropShadow(ctx, px + lean, feetY + 1, 16, 7.5, atmo, 1.3);
+    }
+    contactShadow(ctx, px + lean, feetY + 1, 11, 4, 0.3);
+
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // Linkes Bein (Oberschenkel + Unterschenkel)
-    ctx.strokeStyle = '#1a1a2e';
-    ctx.lineWidth = 5.5;
-    // Oberschenkel
+    // === Haare hinten (fallen über den Rücken) ===
+    const hairBack = ctx.createLinearGradient(px, headY - 6 * S, px, headY + 18 * S);
+    hairBack.addColorStop(0, '#E9C94F');
+    hairBack.addColorStop(0.55, '#D9B63F');
+    hairBack.addColorStop(1, '#B8952F');
+    ctx.fillStyle = hairBack;
     ctx.beginPath();
-    ctx.moveTo(px - 4, hipY);
-    ctx.lineTo(px - 4 - kneeSwing, kneeY);
-    ctx.stroke();
-    // Unterschenkel
-    ctx.strokeStyle = '#1a1a2e';
-    ctx.lineWidth = 4.5;
+    ctx.ellipse(px - face * 0.8, headY + 9 * S, 8.4 * S, 16 * S, -face * 0.04, 0, Math.PI * 2);
+    ctx.fill();
+    // Wehende Strähne
+    const strand = Math.sin(now / 900) * 1.6 + (isMoving ? -face * 1.8 : 0);
+    ctx.strokeStyle = 'rgba(200,168,58,0.75)';
+    ctx.lineWidth = 2.2 * S;
     ctx.beginPath();
-    ctx.moveTo(px - 4 - kneeSwing, kneeY);
-    ctx.lineTo(px - 4 - legSwing, feetY - 2);
-    ctx.stroke();
-
-    // Rechtes Bein (Oberschenkel + Unterschenkel)
-    ctx.strokeStyle = '#1a1a2e';
-    ctx.lineWidth = 5.5;
-    ctx.beginPath();
-    ctx.moveTo(px + 4, hipY);
-    ctx.lineTo(px + 4 + kneeSwing, kneeY);
-    ctx.stroke();
-    ctx.lineWidth = 4.5;
-    ctx.beginPath();
-    ctx.moveTo(px + 4 + kneeSwing, kneeY);
-    ctx.lineTo(px + 4 + legSwing, feetY - 2);
+    ctx.moveTo(px - face * 6 * S, headY + 2 * S);
+    ctx.quadraticCurveTo(px - face * 9 * S + strand, headY + 11 * S, px - face * 7 * S + strand * 1.6, headY + 20 * S);
     ctx.stroke();
 
-    // === Barfuß (hautfarbene Füße) ===
-    ctx.fillStyle = '#F5C1A8';
-    // Linker Fuß
+    // === Beine (Leggings) ===
+    const legColor = '#232338';
+    const legHi = '#33334e';
+    const drawLeg = (side, swing, knee) => {
+      const hx = px + side * 3.6 * S;
+      ctx.strokeStyle = legColor;
+      ctx.lineWidth = 6.2 * S;
+      ctx.beginPath();
+      ctx.moveTo(hx, hipY);
+      ctx.lineTo(hx + side * knee * 0.4 - knee * 0.5, kneeY);
+      ctx.stroke();
+      ctx.lineWidth = 5 * S;
+      ctx.beginPath();
+      ctx.moveTo(hx + side * knee * 0.4 - knee * 0.5, kneeY);
+      ctx.lineTo(hx - swing, feetY - 2 * S);
+      ctx.stroke();
+      // Lichtkante vorn
+      ctx.strokeStyle = legHi;
+      ctx.lineWidth = 1.6 * S;
+      ctx.beginPath();
+      ctx.moveTo(hx + face * 1.6, hipY + 1);
+      ctx.lineTo(hx + face * 1.6 - swing * 0.6, kneeY);
+      ctx.stroke();
+    };
+    // Hinteres Bein zuerst
+    if (walk >= 0) { drawLeg(-1, -legSwing, -kneeSwing); drawLeg(1, legSwing, kneeSwing); }
+    else { drawLeg(1, legSwing, kneeSwing); drawLeg(-1, -legSwing, -kneeSwing); }
+
+    // === Barfüße ===
+    const drawFoot = (side, swing) => {
+      const fx = px + side * 3.6 * S - swing;
+      ctx.fillStyle = '#F2BC9F';
+      ctx.beginPath();
+      ctx.ellipse(fx + face * 1.2, feetY, 4.6 * S, 2.7 * S, face * 0.12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(198,140,110,0.55)';
+      ctx.beginPath();
+      ctx.ellipse(fx + face * 0.4, feetY + 1.2 * S, 3 * S, 1.5 * S, 0, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    drawFoot(-1, -legSwing);
+    drawFoot(1, legSwing);
+
+    // === Hinterer Arm ===
+    const sleeveGrad = (x1, y1, x2, y2) => {
+      const g = ctx.createLinearGradient(x1, y1, x2, y2);
+      g.addColorStop(0, '#4E96C8');
+      g.addColorStop(0.55, '#7FB86C');
+      g.addColorStop(1, '#AFCE58');
+      return g;
+    };
+    const drawArm = (side, swing, back) => {
+      const sx = px + side * 8.6 * S;
+      const ex = px + side * 11.5 * S - swing * side * 0.2 + swing;
+      const ey = hipY + 1 * S;
+      // Dunkle Kontur zuerst, damit der Arm sich vom Pulli abhebt —
+      // ohne sie verschwimmt er mit dem Rumpf zu einer Fläche.
+      ctx.strokeStyle = 'rgba(26,48,64,0.5)';
+      ctx.lineWidth = (back ? 6 : 6.8) * S;
+      ctx.beginPath();
+      ctx.moveTo(sx, shoulderY + 1.5 * S);
+      ctx.quadraticCurveTo(sx + side * 2 * S, (shoulderY + ey) / 2, ex, ey);
+      ctx.stroke();
+
+      ctx.strokeStyle = sleeveGrad(sx, shoulderY, ex, ey);
+      ctx.lineWidth = (back ? 4.6 : 5.2) * S;
+      ctx.beginPath();
+      ctx.moveTo(sx, shoulderY + 1.5 * S);
+      ctx.quadraticCurveTo(sx + side * 2 * S, (shoulderY + ey) / 2, ex, ey);
+      ctx.stroke();
+      if (back) return { ex, ey };
+      // Hand
+      ctx.fillStyle = '#F2BC9F';
+      ctx.beginPath();
+      ctx.arc(ex, ey + 2 * S, 3.1 * S, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(198,140,110,0.4)';
+      ctx.beginPath();
+      ctx.arc(ex, ey + 3 * S, 2 * S, 0, Math.PI);
+      ctx.fill();
+      return { ex, ey };
+    };
+    const backSide = face > 0 ? -1 : 1;
+    const backArm = drawArm(backSide, backSide === 1 ? -armSwing : armSwing, true);
+    ctx.fillStyle = '#E3AE93';
     ctx.beginPath();
-    ctx.ellipse(px - 4 - legSwing + 1, feetY, 4, 2.5, 0.1, 0, Math.PI * 2);
-    ctx.fill();
-    // Rechter Fuß
-    ctx.beginPath();
-    ctx.ellipse(px + 4 + legSwing + 1, feetY, 4, 2.5, -0.1, 0, Math.PI * 2);
-    ctx.fill();
-    // Fußrücken-Schattierung
-    ctx.fillStyle = '#E8AD90';
-    ctx.beginPath();
-    ctx.ellipse(px - 4 - legSwing, feetY + 0.5, 2.5, 1.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(px + 4 + legSwing, feetY + 0.5, 2.5, 1.5, 0, 0, Math.PI * 2);
+    ctx.arc(backArm.ex, backArm.ey + 2 * S, 2.8 * S, 0, Math.PI * 2);
     ctx.fill();
 
-    // === Körper / Pulli (blau-zu-gelb Gradient) ===
-    const pulliGrad = ctx.createLinearGradient(px, shoulderY - 2, px, hipY + 3);
-    pulliGrad.addColorStop(0, '#5BA4D9');    // Oben: Kräftiges Blau
-    pulliGrad.addColorStop(0.35, '#6DB8D6');  // Mitte-oben: Hellblau
-    pulliGrad.addColorStop(0.7, '#A8CD5A');   // Mitte-unten: Grüngelb
-    pulliGrad.addColorStop(1, '#C8D94A');      // Unten: Gelb-Grün
-
-    // Pulli-Torso (leicht tailliert)
-    ctx.fillStyle = pulliGrad;
+    // === Pulli ===
+    const pulli = ctx.createLinearGradient(px, shoulderY - 3 * S, px, hipY + 4 * S);
+    pulli.addColorStop(0, '#59A6DC');
+    pulli.addColorStop(0.32, '#6FBAD6');
+    pulli.addColorStop(0.68, '#A6CC5C');
+    pulli.addColorStop(1, '#C9DA4C');
+    ctx.fillStyle = pulli;
     ctx.beginPath();
-    ctx.moveTo(px - 9, shoulderY);          // Linke Schulter
-    ctx.lineTo(px + 9, shoulderY);          // Rechte Schulter
-    ctx.lineTo(px + 8, waistY);             // Rechte Taille (etwas schmaler)
-    ctx.lineTo(px + 7.5, hipY + 2);         // Rechte Hüfte
-    ctx.lineTo(px - 7.5, hipY + 2);         // Linke Hüfte
-    ctx.lineTo(px - 8, waistY);             // Linke Taille
+    ctx.moveTo(px - 9.2 * S, shoulderY);
+    ctx.quadraticCurveTo(px - 10 * S, waistY - 3 * S, px - 8.4 * S, waistY);
+    ctx.quadraticCurveTo(px - 8.8 * S, hipY, px - 8.2 * S, hipY + 3 * S);
+    ctx.lineTo(px + 8.2 * S, hipY + 3 * S);
+    ctx.quadraticCurveTo(px + 8.8 * S, hipY, px + 8.4 * S, waistY);
+    ctx.quadraticCurveTo(px + 10 * S, waistY - 3 * S, px + 9.2 * S, shoulderY);
+    ctx.closePath();
+    ctx.fill();
+    // Umriss: hebt die Figur vor der detailreichen Wiese ab
+    ctx.strokeStyle = 'rgba(26,48,64,0.42)';
+    ctx.lineWidth = 1.3 * S;
+    ctx.stroke();
+
+    // Stofffalten
+    ctx.strokeStyle = 'rgba(48,86,110,0.22)';
+    ctx.lineWidth = 1.1 * S;
+    for (let i = -1; i <= 1; i++) {
+      ctx.beginPath();
+      ctx.moveTo(px + i * 4.2 * S, shoulderY + 3 * S);
+      ctx.quadraticCurveTo(px + i * 5 * S + walk2 * 0.8, waistY, px + i * 4 * S, hipY + 2 * S);
+      ctx.stroke();
+    }
+    // Schattenseite
+    const shadeSide = ctx.createLinearGradient(px - 9 * S, 0, px + 9 * S, 0);
+    shadeSide.addColorStop(0, face > 0 ? 'rgba(20,40,60,0.22)' : 'rgba(255,255,255,0.14)');
+    shadeSide.addColorStop(0.5, 'rgba(0,0,0,0)');
+    shadeSide.addColorStop(1, face > 0 ? 'rgba(255,255,255,0.14)' : 'rgba(20,40,60,0.22)');
+    ctx.fillStyle = shadeSide;
+    ctx.beginPath();
+    ctx.moveTo(px - 9.2 * S, shoulderY);
+    ctx.lineTo(px + 9.2 * S, shoulderY);
+    ctx.lineTo(px + 8.2 * S, hipY + 3 * S);
+    ctx.lineTo(px - 8.2 * S, hipY + 3 * S);
     ctx.closePath();
     ctx.fill();
 
-    // Pulli-Saum (unterer Rand, etwas dunkler)
-    ctx.strokeStyle = '#B8C840';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(px - 7.5, hipY + 2);
-    ctx.lineTo(px + 7.5, hipY + 2);
-    ctx.stroke();
+    // Bündchen am Saum
+    ctx.fillStyle = 'rgba(150,168,52,0.85)';
+    ctx.fillRect(px - 8.3 * S, hipY + 2.2 * S, 16.6 * S, 2 * S);
 
     // Rundkragen
-    ctx.fillStyle = '#4E96C8';
+    ctx.fillStyle = '#3F86B6';
     ctx.beginPath();
-    ctx.ellipse(px, shoulderY, 6, 2.5, 0, 0, Math.PI * 2);
+    ctx.ellipse(px, shoulderY - 0.5 * S, 6.2 * S, 2.6 * S, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#2E6C96';
+    ctx.beginPath();
+    ctx.ellipse(px, shoulderY, 4.6 * S, 1.7 * S, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // === Arme (Pulli-Ärmel mit Gradient + Haut-Hände) ===
-    // Linker Arm
-    const leftArmGrad = ctx.createLinearGradient(px - 9, shoulderY, px - 13 + armSwing, hipY);
-    leftArmGrad.addColorStop(0, '#5BA4D9');
-    leftArmGrad.addColorStop(0.6, '#8BBD5C');
-    leftArmGrad.addColorStop(1, '#A8CD5A');
-    ctx.strokeStyle = leftArmGrad;
-    ctx.lineWidth = 4.5;
+    // === Hals und Kopf ===
+    ctx.fillStyle = '#E3AE93';
+    ctx.fillRect(px - 2.8 * S, neckY - 1 * S, 5.6 * S, 5 * S);
+
+    const skin = ctx.createRadialGradient(
+      px + face * 2 * S, headY - 3 * S, 1,
+      px, headY, 11 * S
+    );
+    skin.addColorStop(0, '#FBD0B6');
+    skin.addColorStop(0.7, '#F2BC9F');
+    skin.addColorStop(1, '#DCA286');
+    ctx.fillStyle = skin;
     ctx.beginPath();
-    ctx.moveTo(px - 9, shoulderY + 2);
-    ctx.lineTo(px - 13 + armSwing, hipY);
+    ctx.ellipse(px, headY, 9 * S, 9.6 * S, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // === Haare vorn ===
+    const hairTop = ctx.createLinearGradient(px, headY - 12 * S, px, headY + 4 * S);
+    hairTop.addColorStop(0, '#F6DC72');
+    hairTop.addColorStop(0.6, '#E9C94F');
+    hairTop.addColorStop(1, '#CFAE3C');
+    ctx.fillStyle = hairTop;
+    // Oberkopf
+    ctx.beginPath();
+    ctx.ellipse(px, headY - 3.4 * S, 10.8 * S, 7.6 * S, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(120,92,26,0.35)';
+    ctx.lineWidth = 1.1 * S;
     ctx.stroke();
-
-    // Rechter Arm
-    const rightArmGrad = ctx.createLinearGradient(px + 9, shoulderY, px + 13 - armSwing, hipY);
-    rightArmGrad.addColorStop(0, '#5BA4D9');
-    rightArmGrad.addColorStop(0.6, '#8BBD5C');
-    rightArmGrad.addColorStop(1, '#A8CD5A');
-    ctx.strokeStyle = rightArmGrad;
-    ctx.lineWidth = 4.5;
+    // Seitlicher Fall
     ctx.beginPath();
-    ctx.moveTo(px + 9, shoulderY + 2);
-    ctx.lineTo(px + 13 - armSwing, hipY);
-    ctx.stroke();
-
-    // Hände (Hautfarbe)
-    ctx.fillStyle = '#F5C1A8';
-    ctx.beginPath();
-    ctx.arc(px - 13 + armSwing, hipY + 1, 2.8, 0, Math.PI * 2);
+    ctx.ellipse(px - 9.4 * S, headY + 3 * S, 3.6 * S, 9.5 * S, 0.14, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.arc(px + 13 - armSwing, hipY + 1, 2.8, 0, Math.PI * 2);
+    ctx.ellipse(px + 9.4 * S, headY + 3 * S, 3.6 * S, 9.5 * S, -0.14, 0, Math.PI * 2);
+    ctx.fill();
+    // Pony, zur Blickrichtung gescheitelt
+    ctx.beginPath();
+    ctx.ellipse(px + face * 1.6 * S, headY - 5.4 * S, 9.6 * S, 5 * S, face * 0.06, 0, Math.PI * 2);
+    ctx.fill();
+    // Einzelne Strähnen
+    ctx.strokeStyle = 'rgba(190,158,50,0.5)';
+    ctx.lineWidth = 0.9 * S;
+    for (let i = -2; i <= 2; i++) {
+      ctx.beginPath();
+      ctx.moveTo(px + i * 3 * S, headY - 10 * S);
+      ctx.quadraticCurveTo(px + i * 4 * S + face * 2, headY - 6 * S, px + i * 4.4 * S + face * 3, headY - 2 * S);
+      ctx.stroke();
+    }
+    // Glanzlicht
+    ctx.fillStyle = 'rgba(255,244,180,0.45)';
+    ctx.beginPath();
+    ctx.ellipse(px + face * 2.6 * S, headY - 7.4 * S, 4.4 * S, 2.2 * S, -face * 0.2, 0, Math.PI * 2);
     ctx.fill();
 
-    // === Kopf ===
-    // Hals
-    ctx.fillStyle = '#F5C1A8';
-    ctx.fillRect(px - 2.5, neckY - 1, 5, 5);
+    // === Gesicht (folgt der Blickrichtung) ===
+    const eo = face * 1.1 * S;   // Versatz zur Blickseite
+    const eye = (side) => {
+      const ex = px + side * 3.2 * S + eo;
+      const ey = headY + 0.8 * S;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.ellipse(ex, ey, 2.7 * S, 2.9 * S, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#4E92BE';
+      ctx.beginPath();
+      ctx.arc(ex + face * 0.5 * S, ey + 0.3 * S, 1.9 * S, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#22405C';
+      ctx.beginPath();
+      ctx.arc(ex + face * 0.6 * S, ey + 0.4 * S, 1 * S, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(ex - 0.6 * S, ey - 0.8 * S, 0.75 * S, 0, Math.PI * 2);
+      ctx.fill();
+      // Wimpernkante
+      ctx.strokeStyle = 'rgba(90,64,30,0.55)';
+      ctx.lineWidth = 0.9 * S;
+      ctx.beginPath();
+      ctx.arc(ex, ey, 2.8 * S, Math.PI * 1.05, Math.PI * 1.95);
+      ctx.stroke();
+    };
+    eye(-1);
+    eye(1);
 
-    // Kopf (Hautfarbe, leicht oval)
-    ctx.fillStyle = '#F5C1A8';
-    ctx.beginPath();
-    ctx.ellipse(px, headY, 8.5, 9, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // === Haare (blond, voluminös, gewellt) ===
-    // Haupthaar-Volumen (Oberkopf)
-    ctx.fillStyle = '#E8C84A';
-    ctx.beginPath();
-    ctx.ellipse(px, headY - 3, 10.5, 7, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Stirn-Pony (leicht seitlich)
-    ctx.fillStyle = '#F0D45A';
-    ctx.beginPath();
-    ctx.ellipse(px + 1, headY - 5, 9.5, 5, 0.05, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Seitliches Haar links (lang, gewellt)
-    ctx.fillStyle = '#E8C84A';
-    ctx.beginPath();
-    ctx.ellipse(px - 9, headY + 3, 3.5, 9, 0.15, 0, Math.PI * 2);
-    ctx.fill();
-    // Strähne links unten
-    ctx.fillStyle = '#D4B83E';
-    ctx.beginPath();
-    ctx.ellipse(px - 8, headY + 10, 2.5, 5, 0.2, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Seitliches Haar rechts (lang, gewellt)
-    ctx.fillStyle = '#E8C84A';
-    ctx.beginPath();
-    ctx.ellipse(px + 9, headY + 3, 3.5, 9, -0.15, 0, Math.PI * 2);
-    ctx.fill();
-    // Strähne rechts unten
-    ctx.fillStyle = '#D4B83E';
-    ctx.beginPath();
-    ctx.ellipse(px + 8, headY + 10, 2.5, 5, -0.2, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Haar-Highlight (Glanzpunkt oben)
-    ctx.fillStyle = 'rgba(255, 235, 140, 0.4)';
-    ctx.beginPath();
-    ctx.ellipse(px + 2, headY - 6, 4, 2.5, -0.2, 0, Math.PI * 2);
-    ctx.fill();
-
-    // === Gesicht ===
-    // Augen (leicht mandelförmig)
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.ellipse(px - 3, headY + 0.5, 2.5, 2.8, -0.05, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(px + 3, headY + 0.5, 2.5, 2.8, 0.05, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Iris (blaugrau)
-    ctx.fillStyle = '#5A9EC8';
-    ctx.beginPath();
-    ctx.arc(px - 2.5, headY + 0.8, 1.8, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(px + 3.5, headY + 0.8, 1.8, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Pupillen (dunkel)
-    ctx.fillStyle = '#2a4a6a';
-    ctx.beginPath();
-    ctx.arc(px - 2.3, headY + 1, 0.9, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(px + 3.7, headY + 1, 0.9, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Augen-Glanzpunkt
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.arc(px - 3, headY + 0.2, 0.6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(px + 3, headY + 0.2, 0.6, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Augenbrauen (fein, blond)
-    ctx.strokeStyle = '#C8A840';
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.arc(px - 3, headY - 2, 3, 1.1 * Math.PI, 1.85 * Math.PI);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(px + 3, headY - 2, 3, 1.15 * Math.PI, 1.9 * Math.PI);
-    ctx.stroke();
-
-    // Nase (dezent)
-    ctx.strokeStyle = '#E0A890';
-    ctx.lineWidth = 0.7;
-    ctx.beginPath();
-    ctx.moveTo(px, headY + 1.5);
-    ctx.lineTo(px - 0.5, headY + 3.5);
-    ctx.stroke();
-
-    // Mund (freundliches Lächeln)
-    ctx.strokeStyle = '#D4837A';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(px, headY + 5, 2.5, 0.15 * Math.PI, 0.85 * Math.PI);
-    ctx.stroke();
-
-    // Wangen (sanftes Rouge)
-    ctx.fillStyle = 'rgba(255, 140, 140, 0.18)';
-    ctx.beginPath();
-    ctx.arc(px - 5.5, headY + 2.5, 2.2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(px + 5.5, headY + 2.5, 2.2, 0, Math.PI * 2);
-    ctx.fill();
-  }, [gameState]);
-
-  // Einzelnes Gebäude an Position zeichnen (wiederverwendbar für normal + ghost)
-  const drawShelter = useCallback((ctx, sx, sy, level, alpha) => {
-    ctx.globalAlpha = alpha;
-    const cx = sx + TILE_SIZE / 2;
-
-    switch (level) {
-      case 1: {
-        // === Unterstand: Schräges Blätterdach auf 2 Stöcken ===
-        // Laubstreu am Boden
-        ctx.fillStyle = '#5a7a3a';
-        ctx.fillRect(sx + 10, sy + 48, 44, 14);
-        ctx.fillStyle = '#4a6a2f';
-        ctx.fillRect(sx + 14, sy + 50, 36, 10);
-
-        // Stöcke (Stützen)
-        ctx.strokeStyle = '#6b4226';
-        ctx.lineWidth = 3;
-        // Linker Stock
-        ctx.beginPath();
-        ctx.moveTo(sx + 14, sy + 58);
-        ctx.lineTo(sx + 18, sy + 22);
-        ctx.stroke();
-        // Rechter Stock
-        ctx.beginPath();
-        ctx.moveTo(sx + 50, sy + 58);
-        ctx.lineTo(sx + 46, sy + 30);
-        ctx.stroke();
-
-        // Schräges Blätterdach
-        ctx.fillStyle = '#3d7a1a';
-        ctx.beginPath();
-        ctx.moveTo(sx + 8, sy + 38);
-        ctx.lineTo(sx + 16, sy + 16);
-        ctx.lineTo(sx + 56, sy + 24);
-        ctx.lineTo(sx + 52, sy + 42);
-        ctx.closePath();
-        ctx.fill();
-        // Blatt-Streifen
-        ctx.fillStyle = '#4d8a2a';
-        ctx.beginPath();
-        ctx.moveTo(sx + 10, sy + 34);
-        ctx.lineTo(sx + 18, sy + 18);
-        ctx.lineTo(sx + 54, sy + 26);
-        ctx.lineTo(sx + 50, sy + 38);
-        ctx.closePath();
-        ctx.fill();
-        break;
-      }
-      case 2: {
-        // === Hütte: Holzwände, Strohdach, Tür, Fenster ===
-        const w = 44, h = 30;
-        const bx = cx - w / 2, by = sy + 28;
-
-        // Holzwände
-        ctx.fillStyle = '#8B6B3F';
-        ctx.fillRect(bx, by, w, h);
-        // Holz-Planken-Linien
-        ctx.strokeStyle = '#6b4f2a';
-        ctx.lineWidth = 1;
-        for (let i = 1; i < 4; i++) {
-          ctx.beginPath();
-          ctx.moveTo(bx, by + i * (h / 4));
-          ctx.lineTo(bx + w, by + i * (h / 4));
-          ctx.stroke();
-        }
-
-        // Strohdach
-        ctx.fillStyle = '#c4a243';
-        ctx.beginPath();
-        ctx.moveTo(bx - 6, by);
-        ctx.lineTo(cx, sy + 10);
-        ctx.lineTo(bx + w + 6, by);
-        ctx.closePath();
-        ctx.fill();
-        // Stroh-Streifen
-        ctx.strokeStyle = '#a88a30';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(bx - 2, by - 3);
-        ctx.lineTo(cx, sy + 14);
-        ctx.lineTo(bx + w + 2, by - 3);
-        ctx.stroke();
-
-        // Tür
-        ctx.fillStyle = '#3a2010';
-        ctx.fillRect(cx - 5, by + h - 16, 10, 16);
-        // Türknauf
-        ctx.fillStyle = '#c0a040';
-        ctx.beginPath();
-        ctx.arc(cx + 2, by + h - 8, 1.5, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Fenster
-        ctx.fillStyle = '#87CEEB';
-        ctx.fillRect(bx + 5, by + 6, 8, 8);
-        ctx.strokeStyle = '#5a3a1a';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(bx + 5, by + 6, 8, 8);
-        // Fensterkreuz
-        ctx.beginPath();
-        ctx.moveTo(bx + 9, by + 6);
-        ctx.lineTo(bx + 9, by + 14);
-        ctx.moveTo(bx + 5, by + 10);
-        ctx.lineTo(bx + 13, by + 10);
-        ctx.stroke();
-        break;
-      }
-      case 3: {
-        // === Blockhaus: Blockbalken-Wände, Giebeldach, Schornstein, 2 Fenster ===
-        const w = 48, h = 32;
-        const bx = cx - w / 2, by = sy + 26;
-
-        // Blockbalken-Wände
-        ctx.fillStyle = '#7a5a30';
-        ctx.fillRect(bx, by, w, h);
-        // Balken-Linien
-        ctx.strokeStyle = '#5a3a18';
-        ctx.lineWidth = 1;
-        for (let i = 0; i < 5; i++) {
-          const yy = by + 3 + i * 6;
-          ctx.beginPath();
-          ctx.moveTo(bx, yy);
-          ctx.lineTo(bx + w, yy);
-          ctx.stroke();
-        }
-        // Balken-Enden (überstehend)
-        ctx.fillStyle = '#6a4a28';
-        ctx.fillRect(bx - 3, by, 3, h);
-        ctx.fillRect(bx + w, by, 3, h);
-
-        // Giebeldach
-        ctx.fillStyle = '#8B4513';
-        ctx.beginPath();
-        ctx.moveTo(bx - 5, by);
-        ctx.lineTo(cx, sy + 8);
-        ctx.lineTo(bx + w + 5, by);
-        ctx.closePath();
-        ctx.fill();
-        // Dachfirst
-        ctx.strokeStyle = '#5a2a08';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(bx - 5, by);
-        ctx.lineTo(cx, sy + 8);
-        ctx.lineTo(bx + w + 5, by);
-        ctx.stroke();
-
-        // Schornstein
-        ctx.fillStyle = '#666';
-        ctx.fillRect(bx + w - 12, sy + 6, 8, 14);
-        ctx.fillStyle = '#555';
-        ctx.fillRect(bx + w - 13, sy + 4, 10, 4);
-
-        // Tür
-        ctx.fillStyle = '#3a2010';
-        ctx.fillRect(cx - 6, by + h - 18, 12, 18);
-        ctx.fillStyle = '#c0a040';
-        ctx.beginPath();
-        ctx.arc(cx + 3, by + h - 9, 1.5, 0, Math.PI * 2);
-        ctx.fill();
-
-        // 2 Fenster
-        for (const fx of [bx + 5, bx + w - 13]) {
-          ctx.fillStyle = '#87CEEB';
-          ctx.fillRect(fx, by + 8, 8, 8);
-          ctx.strokeStyle = '#5a3a1a';
-          ctx.lineWidth = 1;
-          ctx.strokeRect(fx, by + 8, 8, 8);
-          ctx.beginPath();
-          ctx.moveTo(fx + 4, by + 8);
-          ctx.lineTo(fx + 4, by + 16);
-          ctx.moveTo(fx, by + 12);
-          ctx.lineTo(fx + 8, by + 12);
-          ctx.stroke();
-        }
-        break;
-      }
-      case 4: {
-        // === Steinhaus: Steinmauer, Ziegeldach, 2 Fenster mit Rahmen, Rauch ===
-        const w = 50, h = 34;
-        const bx = cx - w / 2, by = sy + 24;
-
-        // Steinmauer
-        ctx.fillStyle = '#888';
-        ctx.fillRect(bx, by, w, h);
-        // Steinmuster
-        ctx.strokeStyle = '#666';
-        ctx.lineWidth = 1;
-        for (let row = 0; row < 4; row++) {
-          const yy = by + row * 8;
-          ctx.beginPath();
-          ctx.moveTo(bx, yy + 8);
-          ctx.lineTo(bx + w, yy + 8);
-          ctx.stroke();
-          const stoneOffset = row % 2 === 0 ? 0 : 10;
-          for (let col = stoneOffset; col < w; col += 20) {
-            ctx.beginPath();
-            ctx.moveTo(bx + col, yy);
-            ctx.lineTo(bx + col, yy + 8);
-            ctx.stroke();
-          }
-        }
-
-        // Ziegeldach
-        ctx.fillStyle = '#B0463C';
-        ctx.beginPath();
-        ctx.moveTo(bx - 6, by);
-        ctx.lineTo(cx, sy + 6);
-        ctx.lineTo(bx + w + 6, by);
-        ctx.closePath();
-        ctx.fill();
-        // Dachziegel-Linien
-        ctx.strokeStyle = '#8a3028';
-        ctx.lineWidth = 1;
-        for (let i = 1; i <= 3; i++) {
-          const t = i / 4;
-          const ly = by + (sy + 6 - by) * t;
-          const lx1 = bx - 6 + (cx - bx + 6) * t - (1 - t) * 4;
-          const lx2 = bx + w + 6 - (bx + w + 6 - cx) * t + (1 - t) * 4;
-          ctx.beginPath();
-          ctx.moveTo(lx1, ly);
-          ctx.lineTo(lx2, ly);
-          ctx.stroke();
-        }
-
-        // Schornstein mit Rauch
-        ctx.fillStyle = '#555';
-        ctx.fillRect(bx + w - 14, sy + 2, 10, 16);
-        ctx.fillStyle = '#444';
-        ctx.fillRect(bx + w - 15, sy, 12, 4);
-        // Rauch
-        ctx.fillStyle = 'rgba(200,200,200,0.4)';
-        const t = (Date.now() / 800) % 3;
-        for (let i = 0; i < 3; i++) {
-          const smokeY = sy - 2 - (t + i * 4) * 2;
-          const smokeR = 2 + i * 1.5;
-          ctx.beginPath();
-          ctx.arc(bx + w - 9 + Math.sin(t + i) * 2, smokeY, smokeR, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Tür (größer)
-        ctx.fillStyle = '#4a2a10';
-        ctx.fillRect(cx - 7, by + h - 20, 14, 20);
-        ctx.strokeStyle = '#3a1a08';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(cx - 7, by + h - 20, 14, 20);
-        // Türknauf
-        ctx.fillStyle = '#d4a840';
-        ctx.beginPath();
-        ctx.arc(cx + 4, by + h - 10, 2, 0, Math.PI * 2);
-        ctx.fill();
-
-        // 2 Fenster mit Rahmen
-        for (const fx of [bx + 4, bx + w - 14]) {
-          // Rahmen
-          ctx.fillStyle = '#5a3a1a';
-          ctx.fillRect(fx - 1, by + 8, 12, 12);
-          // Glas
-          ctx.fillStyle = '#a0d8f0';
-          ctx.fillRect(fx, by + 9, 10, 10);
-          // Kreuz
-          ctx.strokeStyle = '#5a3a1a';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(fx + 5, by + 9);
-          ctx.lineTo(fx + 5, by + 19);
-          ctx.moveTo(fx, by + 14);
-          ctx.lineTo(fx + 10, by + 14);
-          ctx.stroke();
-        }
-        break;
-      }
-      case 5:
-      default: {
-        // === Villa: Zweistöckig, Balkon, mehrere Fenster, Steinfundament, verziertes Dach ===
-        const w = 54, h = 42;
-        const bx = cx - w / 2, by = sy + 18;
-
-        // Steinfundament
-        ctx.fillStyle = '#777';
-        ctx.fillRect(bx - 2, by + h - 4, w + 4, 6);
-
-        // Untergeschoss
-        ctx.fillStyle = '#c8b898';
-        ctx.fillRect(bx, by + h / 2, w, h / 2);
-        // Obergeschoss
-        ctx.fillStyle = '#d4c4a8';
-        ctx.fillRect(bx, by, w, h / 2);
-        // Geschoss-Trennung
-        ctx.fillStyle = '#8a7a5a';
-        ctx.fillRect(bx, by + h / 2 - 1, w, 3);
-
-        // Verziertes Dach
-        ctx.fillStyle = '#6a2828';
-        ctx.beginPath();
-        ctx.moveTo(bx - 6, by);
-        ctx.lineTo(cx, sy + 2);
-        ctx.lineTo(bx + w + 6, by);
-        ctx.closePath();
-        ctx.fill();
-        // Dachverzierung
-        ctx.strokeStyle = '#4a1818';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(bx - 6, by);
-        ctx.lineTo(cx, sy + 2);
-        ctx.lineTo(bx + w + 6, by);
-        ctx.stroke();
-        // Dachspitze-Ornament
-        ctx.fillStyle = '#d4a840';
-        ctx.beginPath();
-        ctx.arc(cx, sy + 1, 2.5, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Schornstein
-        ctx.fillStyle = '#555';
-        ctx.fillRect(bx + w - 12, sy - 2, 8, 14);
-        ctx.fillStyle = '#444';
-        ctx.fillRect(bx + w - 13, sy - 4, 10, 4);
-        // Rauch
-        ctx.fillStyle = 'rgba(200,200,200,0.35)';
-        const t5 = (Date.now() / 900) % 3;
-        for (let i = 0; i < 3; i++) {
-          ctx.beginPath();
-          ctx.arc(bx + w - 8 + Math.sin(t5 + i) * 2, sy - 6 - (t5 + i * 3) * 2, 2 + i, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Balkon (Obergeschoss Mitte)
-        ctx.fillStyle = '#8a7a5a';
-        ctx.fillRect(cx - 12, by + h / 2 - 3, 24, 3);
-        // Balkongeländer
-        ctx.strokeStyle = '#6a5a3a';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(cx - 12, by + h / 2 - 10, 24, 8);
-        // Geländer-Stäbe
-        for (let i = 0; i < 4; i++) {
-          ctx.beginPath();
-          ctx.moveTo(cx - 10 + i * 7, by + h / 2 - 10);
-          ctx.lineTo(cx - 10 + i * 7, by + h / 2 - 2);
-          ctx.stroke();
-        }
-
-        // Tür (Untergeschoss, mittig)
-        ctx.fillStyle = '#3a1a08';
-        ctx.fillRect(cx - 7, by + h - 18, 14, 18);
-        // Tür-Rahmen
-        ctx.strokeStyle = '#8a7a5a';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(cx - 7, by + h - 18, 14, 18);
-        // Türknauf
-        ctx.fillStyle = '#d4a840';
-        ctx.beginPath();
-        ctx.arc(cx + 4, by + h - 9, 2, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Fenster Obergeschoss (3 Stück)
-        for (const fx of [bx + 4, cx - 4, bx + w - 12]) {
-          ctx.fillStyle = '#a0d8f0';
-          ctx.fillRect(fx, by + 6, 8, 10);
-          ctx.strokeStyle = '#5a4a2a';
-          ctx.lineWidth = 1;
-          ctx.strokeRect(fx, by + 6, 8, 10);
-          ctx.beginPath();
-          ctx.moveTo(fx + 4, by + 6);
-          ctx.lineTo(fx + 4, by + 16);
-          ctx.moveTo(fx, by + 11);
-          ctx.lineTo(fx + 8, by + 11);
-          ctx.stroke();
-        }
-        // Fenster Untergeschoss (2 Stück, neben Tür)
-        for (const fx of [bx + 4, bx + w - 12]) {
-          ctx.fillStyle = '#a0d8f0';
-          ctx.fillRect(fx, by + h / 2 + 4, 8, 10);
-          ctx.strokeStyle = '#5a4a2a';
-          ctx.lineWidth = 1;
-          ctx.strokeRect(fx, by + h / 2 + 4, 8, 10);
-          ctx.beginPath();
-          ctx.moveTo(fx + 4, by + h / 2 + 4);
-          ctx.lineTo(fx + 4, by + h / 2 + 14);
-          ctx.moveTo(fx, by + h / 2 + 9);
-          ctx.lineTo(fx + 8, by + h / 2 + 9);
-          ctx.stroke();
-        }
-        break;
-      }
+    // Augenbrauen
+    ctx.strokeStyle = '#C4A43C';
+    ctx.lineWidth = 0.9 * S;
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.arc(px + side * 3.2 * S + eo, headY - 2.4 * S, 3 * S, Math.PI * 1.12, Math.PI * 1.88);
+      ctx.stroke();
     }
 
-    // Level-Anzeige
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 10px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-    ctx.lineWidth = 2;
-    ctx.strokeText(`Lv.${level}`, cx, sy + TILE_SIZE - 2);
-    ctx.fillText(`Lv.${level}`, cx, sy + TILE_SIZE - 2);
-    ctx.globalAlpha = 1;
-  }, []);
+    // Nase
+    ctx.strokeStyle = 'rgba(200,140,112,0.8)';
+    ctx.lineWidth = 0.8 * S;
+    ctx.beginPath();
+    ctx.moveTo(px + eo + face * 0.4, headY + 2 * S);
+    ctx.quadraticCurveTo(px + eo + face * 1.2, headY + 3.6 * S, px + eo, headY + 4 * S);
+    ctx.stroke();
 
-  const drawCampfire = useCallback((ctx, fx, fy, alpha) => {
-    ctx.globalAlpha = alpha;
-    const time = Date.now() / 200;
+    // Mund
+    ctx.strokeStyle = '#C97A72';
+    ctx.lineWidth = 1.1 * S;
+    ctx.beginPath();
+    ctx.arc(px + eo, headY + 4.8 * S, 2.6 * S, 0.18 * Math.PI, 0.82 * Math.PI);
+    ctx.stroke();
 
-    // Steine um Feuer
-    ctx.fillStyle = '#666';
-    for (let i = 0; i < 6; i++) {
-      const angle = (i / 6) * Math.PI * 2;
+    // Wangen
+    ctx.fillStyle = 'rgba(240,140,130,0.22)';
+    for (const side of [-1, 1]) {
       ctx.beginPath();
-      ctx.arc(
-        fx + 32 + Math.cos(angle) * 16,
-        fy + 36 + Math.sin(angle) * 12,
-        5, 0, Math.PI * 2
-      );
+      ctx.ellipse(px + side * 5.8 * S + eo * 0.5, headY + 3 * S, 2.6 * S, 1.9 * S, 0, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // Flammen
-    ctx.fillStyle = '#ff6600';
-    ctx.beginPath();
-    ctx.arc(fx + 32, fy + 30 + Math.sin(time) * 2, 8, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#ffcc00';
-    ctx.beginPath();
-    ctx.arc(fx + 32, fy + 28 + Math.sin(time + 1) * 3, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#ff3300';
-    ctx.beginPath();
-    ctx.arc(fx + 28, fy + 32 + Math.sin(time + 2) * 2, 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
+    // === Vorderer Arm (über dem Pulli) ===
+    drawArm(-backSide, backSide === 1 ? armSwing : -armSwing, false);
+  }, [gameState]);
+
+  // Einzelnes Gebäude an Position zeichnen (wiederverwendbar für normal + ghost)
+  // Unterstand — die fünf Ausbaustufen kommen als gebackene Sprites aus
+  // render/buildingSprites. Nachts brennt Licht hinter den Fenstern.
+  const drawShelter = useCallback((ctx, sx, sy, level, alpha) => {
+    const atmo = atmoRef.current;
+    const lit = atmo ? atmo.darkness > 0.22 : false;
+    const sprite = getShelterSprite(level, lit);
+    const cx = sx + TILE_SIZE / 2;
+    const cy = sy + TILE_SIZE - 4;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(sprite, cx - BUILD_ANCHOR_X, cy - BUILD_ANCHOR_Y);
+
+    // Rauch aus dem Schornstein — erst ab dem Blockhaus
+    if (level >= 3 && alpha > 0.9) {
+      const t = Date.now() / 1000;
+      const smokeX = cx + (level >= 5 ? 24 : 20);
+      const smokeY = cy - (level >= 5 ? 92 : 74);
+      for (let i = 0; i < 6; i++) {
+        const life = 4.2;
+        const p = ((t * 0.7 + i * (life / 6)) % life) / life;
+        const py = smokeY - p * 52;
+        const px = smokeX + Math.sin(p * 3.2 + i) * (5 + p * 15);
+        const r = 3.5 + p * 13;
+        ctx.fillStyle = `rgba(206,202,196,${(1 - p) * 0.2})`;
+        ctx.beginPath();
+        ctx.arc(px, py, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Stufen-Plakette
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.strokeText(`Lv.${level}`, cx, sy + TILE_SIZE + 8);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(`Lv.${level}`, cx, sy + TILE_SIZE + 8);
+    ctx.restore();
   }, []);
 
-  const drawWaterCollector = useCallback((ctx, wx, wy, alpha) => {
+  // Lagerfeuer: geschichtete Flammen, Glut, Funken und Rauch.
+  // Nachts ist es außerdem die wichtigste Lichtquelle der Insel.
+  const drawCampfire = useCallback((ctx, fx, fy, alpha) => {
+    ctx.save();
     ctx.globalAlpha = alpha;
 
-    // Holzgestell
-    ctx.fillStyle = '#8B6914';
-    ctx.fillRect(wx + 10, wy + 15, 4, 35);
-    ctx.fillRect(wx + 50, wy + 15, 4, 35);
+    const t = Date.now() / 1000;
+    const cx = fx + TILE_SIZE / 2;
+    const cy = fy + 40;
+    // Unregelmäßiges Flackern statt gleichmäßigem Sinus
+    const flick = 0.72
+      + valueNoise(t * 7, 0, 31) * 0.3
+      + Math.sin(t * 19) * 0.06;
 
-    // Auffangschale
-    ctx.fillStyle = '#A0522D';
+    // Ascheteller
+    ctx.fillStyle = 'rgba(48,40,34,0.5)';
     ctx.beginPath();
-    ctx.moveTo(wx + 8, wy + 20);
-    ctx.lineTo(wx + 56, wy + 20);
-    ctx.lineTo(wx + 48, wy + 32);
-    ctx.lineTo(wx + 16, wy + 32);
-    ctx.closePath();
+    ctx.ellipse(cx, cy + 8, 26, 11, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Wasser drin
-    ctx.fillStyle = '#87CEEB';
-    ctx.fillRect(wx + 18, wy + 24, 28, 6);
-    ctx.globalAlpha = 1;
+    // Steinkranz — hintere Steine zuerst
+    const stones = [];
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2 + 0.4;
+      stones.push({
+        x: cx + Math.cos(a) * 23,
+        y: cy + 7 + Math.sin(a) * 11,
+        r: 4.6 + hash2(i, 3, 17) * 2.6,
+        back: Math.sin(a) < 0,
+      });
+    }
+    const paintStone = (s) => {
+      ctx.fillStyle = '#5d5952';
+      ctx.beginPath();
+      ctx.ellipse(s.x, s.y, s.r, s.r * 0.82, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#7b766c';
+      ctx.beginPath();
+      ctx.ellipse(s.x - s.r * 0.2, s.y - s.r * 0.28, s.r * 0.62, s.r * 0.44, 0, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    stones.filter(s => s.back).forEach(paintStone);
+
+    // Brennholz
+    ctx.strokeStyle = '#4a3220';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 5;
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(cx - Math.cos(a) * 15, cy + 6 - Math.sin(a) * 6);
+      ctx.lineTo(cx + Math.cos(a) * 15, cy + 6 + Math.sin(a) * 6);
+      ctx.stroke();
+    }
+
+    // Glut zwischen den Scheiten
+    for (let i = 0; i < 7; i++) {
+      const a = hash2(i, 1, 23) * Math.PI * 2;
+      const d = hash2(i, 2, 23) * 12;
+      const pulse = 0.4 + 0.6 * Math.abs(Math.sin(t * 2.2 + i));
+      ctx.fillStyle = `rgba(255,${104 + pulse * 90 | 0},32,${0.45 + pulse * 0.45})`;
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(a) * d, cy + 5 + Math.sin(a) * d * 0.4, 1.8 + pulse * 1.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Flammen: drei Zungen, jede mit eigenem Rhythmus
+    const flame = (ox, scale, hue, seed) => {
+      const wob = valueNoise(t * 5 + seed, 0, 47) - 0.5;
+      const hgt = (24 + wob * 9) * scale * flick;
+      const wid = (9 + wob * 2.5) * scale;
+      const bx = cx + ox;
+      const by = cy + 4;
+
+      const g = ctx.createLinearGradient(bx, by, bx, by - hgt);
+      g.addColorStop(0, hue[0]);
+      g.addColorStop(0.45, hue[1]);
+      g.addColorStop(1, hue[2]);
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(bx - wid, by);
+      ctx.quadraticCurveTo(bx - wid * 0.95, by - hgt * 0.5, bx + wob * 6, by - hgt);
+      ctx.quadraticCurveTo(bx + wid * 0.95, by - hgt * 0.5, bx + wid, by);
+      ctx.quadraticCurveTo(bx, by + 3, bx - wid, by);
+      ctx.fill();
+    };
+
+    flame(-6, 0.85, ['rgba(210,52,12,0.85)', 'rgba(238,110,20,0.8)', 'rgba(252,190,60,0)'], 0);
+    flame(7, 0.78, ['rgba(214,60,14,0.85)', 'rgba(242,128,26,0.8)', 'rgba(252,200,70,0)'], 11);
+    flame(0, 1.1, ['rgba(236,88,18,0.95)', 'rgba(250,164,40,0.9)', 'rgba(255,232,140,0)'], 23);
+    // Heißer Kern
+    flame(0, 0.5, ['rgba(255,206,90,0.95)', 'rgba(255,244,196,0.85)', 'rgba(255,255,240,0)'], 37);
+
+    stones.filter(s => !s.back).forEach(paintStone);
+
+    // Funken
+    for (let i = 0; i < 9; i++) {
+      const life = 1.1 + hash2(i, 5, 29) * 1.1;
+      const p = ((t + hash2(i, 6, 29) * life) % life) / life;
+      const sx = cx + (hash2(i, 7, 29) - 0.5) * 16 + Math.sin(t * 3 + i) * 7 * p;
+      const sy = cy + 2 - p * (34 + hash2(i, 8, 29) * 26);
+      ctx.fillStyle = `rgba(255,${170 + hash2(i, 9, 29) * 70 | 0},70,${(1 - p) * 0.85})`;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 1.5 * (1 - p * 0.5), 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Rauchfahne
+    for (let i = 0; i < 5; i++) {
+      const life = 3.4;
+      const p = ((t * 0.85 + i * (life / 5)) % life) / life;
+      const sy = cy - 18 - p * 56;
+      const sx = cx + Math.sin(p * 3.4 + i) * (7 + p * 16);
+      const r = 4 + p * 15;
+      ctx.fillStyle = `rgba(196,192,186,${(1 - p) * 0.16})`;
+      ctx.beginPath();
+      ctx.arc(sx, sy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }, []);
+  // Regenfänger: gespanntes Tuch über einem Fass. Ob Wasser drin ist,
+  // sieht man dem Bau an — das war vorher nicht erkennbar.
+  const drawWaterCollector = useCallback((ctx, wx, wy, alpha) => {
+    const filled = isWaterCollectorActive(gameStateRef.current?.buildings || {});
+    const sprite = getCollectorSprite(filled);
+    const cx = wx + TILE_SIZE / 2;
+    const cy = wy + TILE_SIZE - 4;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(sprite, cx - BUILD_ANCHOR_X, cy - BUILD_ANCHOR_Y);
+
+    // Tropfen vom Tuch ins Fass, während es regnet
+    const atmo = atmoRef.current;
+    if (filled && atmo?.wet && alpha > 0.9) {
+      const t = Date.now() / 1000;
+      ctx.strokeStyle = 'rgba(186,222,244,0.75)';
+      ctx.lineWidth = 1.2;
+      for (let i = 0; i < 3; i++) {
+        const p = ((t * 1.8 + i * 0.33) % 1);
+        const dy = cy - 26 + p * 5;
+        ctx.beginPath();
+        ctx.moveTo(cx + (i - 1) * 4, dy);
+        ctx.lineTo(cx + (i - 1) * 4, dy + 3);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
   }, []);
 
   // Baum-Wachstumsstufe berechnen (1-10)
@@ -1176,174 +887,95 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
   }, [gameState]);
 
   // Wachsender Baum an Position (col 3, row 3) zeichnen
-  const drawGrowingTree = useCallback((ctx, camera) => {
+  // Gemeinsame Baum-Zeichnung für Hauptbaum und gepflanzte Bäume.
+  // Schatten und Windbewegung kommen aus derselben Quelle wie bei den
+  // Randbäumen, damit alles auf der Insel im selben Takt weht.
+  const paintTree = useCallback((ctx, cx, cy, stage, variant, big, t, windAmt, label) => {
+    const sprite = getGrowthTree(stage, variant, big);
+    const atmo = atmoRef.current;
+
+    if (atmo) {
+      const rw = sprite.w * 0.36;
+      dropShadow(ctx, cx, cy, rw, rw * 0.6, atmo, 1.4);
+      contactShadow(ctx, cx, cy, rw * 0.62, rw * 0.24, 0.3);
+    }
+
+    // Junge Bäume wiegen sich stärker als alte
+    const stiffness = 1.4 + (stage / 10) * 2.2;
+    const bend = sway(cx, cy, t + variant, windAmt, stiffness);
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.transform(1, 0, bend * 0.055, 1, 0, 0);
+    ctx.drawImage(sprite.canvas, -sprite.w / 2, -sprite.h);
+    ctx.restore();
+
+    if (label) {
+      ctx.font = 'bold 9px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.strokeText(label, cx, cy + 11);
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.fillText(label, cx, cy + 11);
+    }
+  }, []);
+
+  // Der Hauptbaum in der Inselmitte — wächst über ein Jahr auf Stufe 10
+  const drawGrowingTree = useCallback((ctx, camera, t, windAmt) => {
     if (!gameState) return;
 
     const stage = getTreeStage();
-    const tx = TREE_POSITION.col * TILE_SIZE + camera.x;
-    const ty = TREE_POSITION.row * TILE_SIZE + camera.y;
-    const cx = tx + TILE_SIZE / 2;  // Mitte der Tile
-    const cy = ty + TILE_SIZE;       // Basis unten
+    const cx = TREE_POSITION.col * TILE_SIZE + camera.x + TILE_SIZE / 2;
+    const cy = TREE_POSITION.row * TILE_SIZE + camera.y + TILE_SIZE;
 
-    // Skalierung: Stufe 1 = 0.2×, Stufe 10 = 1.0× (also 5× Wachstum)
-    const scale = 0.2 + (stage - 1) * (0.8 / 9);
+    paintTree(ctx, cx, cy, stage, 0, true, t, windAmt, `Stufe ${stage}`);
 
-    // Stammhöhe und -breite skaliert (mächtiger Baum bei Stufe 10: ~4 Tiles hoch)
-    const trunkH = 150 * scale;
-    const trunkW = Math.max(6, 45 * scale);
-    const crownR = Math.max(10, 100 * scale);
-    const crownR2 = Math.max(8, 72 * scale);
+    // Jahres-Chronik: Anhänger für jedes Lernthema und Hobbyprojekt.
+    // Die Laternen darin sind nachts echte Lichtquellen — die gemeldeten
+    // Positionen landen im Licht-Pass.
+    const atmo = atmoRef.current;
+    const nightGlow = atmo ? Math.min(1, Math.max(0, atmo.darkness * 1.6)) : 0;
+    chronicleLightsRef.current = drawChronicle(ctx, cx, cy, stage, gameState, t, nightGlow);
+  }, [gameState, getTreeStage, paintTree]);
 
-    // Schatten
-    ctx.fillStyle = 'rgba(0,0,0,0.15)';
-    ctx.beginPath();
-    ctx.ellipse(cx, cy - 2, crownR * 0.6, 4 * scale, 0, 0, Math.PI * 2);
-    ctx.fill();
+  // Gepflanzte Bäume — gleiche Optik, eigene Variante je Standort
+  const drawPlantedTrees = useCallback((ctx, camera, t, windAmt, filter) => {
+    if (!gameState?.plantedTrees || gameState.plantedTrees.length === 0) return;
+    const list = filter ? gameState.plantedTrees.filter(filter) : gameState.plantedTrees;
 
-    // Stamm
-    ctx.fillStyle = stage <= 3 ? '#8B7355' : '#5c3a1e';
-    ctx.fillRect(cx - trunkW / 2, cy - trunkH - 4, trunkW, trunkH);
+    for (const tree of list) {
+      const cx = tree.col * TILE_SIZE + camera.x + TILE_SIZE / 2;
+      const cy = tree.row * TILE_SIZE + camera.y + TILE_SIZE;
 
-    // Stufe 1-2: Setzling (nur dünner Stiel + paar Blätter)
-    if (stage <= 2) {
-      ctx.fillStyle = '#4CAF50';
-      ctx.beginPath();
-      ctx.ellipse(cx, cy - trunkH - 6, crownR * 0.8, crownR * 0.9, 0, 0, Math.PI * 2);
-      ctx.fill();
-      // Stufe 2: zweites Blatt
-      if (stage === 2) {
-        ctx.fillStyle = '#388E3C';
-        ctx.beginPath();
-        ctx.ellipse(cx - 3, cy - trunkH - 4, crownR * 0.5, crownR * 0.6, -0.3, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      return;
+      // 365 Tage = Stufe 10
+      const daysElapsed = (Date.now() - tree.plantedAt) / (24 * 60 * 60 * 1000);
+      const stage = Math.max(1, Math.min(10, Math.floor((daysElapsed / 365) * 10) + 1));
+
+      paintTree(ctx, cx, cy, stage, treeVariant(tree.col, tree.row), false, t, windAmt, `Stufe ${stage}`);
     }
-
-    // Stufe 3-5: Junger Baum (einfache Krone)
-    if (stage <= 5) {
-      // Haupt-Krone
-      ctx.fillStyle = '#2d7a1e';
-      ctx.beginPath();
-      ctx.arc(cx, cy - trunkH - crownR * 0.6, crownR, 0, Math.PI * 2);
-      ctx.fill();
-      // Schatten-Krone
-      ctx.fillStyle = '#1e6016';
-      ctx.beginPath();
-      ctx.arc(cx - crownR * 0.2, cy - trunkH - crownR * 0.8, crownR2, 0, Math.PI * 2);
-      ctx.fill();
-      // Ab Stufe 5: Extra-Blätter
-      if (stage >= 5) {
-        ctx.fillStyle = '#3a8c28';
-        ctx.beginPath();
-        ctx.arc(cx + crownR * 0.4, cy - trunkH - crownR * 0.3, crownR2 * 0.7, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      return;
-    }
-
-    // Stufe 6-8: Ausgewachsener Baum (volle Krone mit Details)
-    if (stage <= 8) {
-      // Äste (ab Stufe 7)
-      if (stage >= 7) {
-        ctx.strokeStyle = '#5c3a1e';
-        ctx.lineWidth = Math.max(2, 3 * scale);
-        ctx.beginPath();
-        ctx.moveTo(cx, cy - trunkH * 0.6);
-        ctx.lineTo(cx - crownR * 0.8, cy - trunkH - crownR * 0.3);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(cx, cy - trunkH * 0.7);
-        ctx.lineTo(cx + crownR * 0.7, cy - trunkH - crownR * 0.2);
-        ctx.stroke();
-      }
-      // Haupt-Krone
-      ctx.fillStyle = '#2d7a1e';
-      ctx.beginPath();
-      ctx.arc(cx, cy - trunkH - crownR * 0.7, crownR, 0, Math.PI * 2);
-      ctx.fill();
-      // Zweite Krone
-      ctx.fillStyle = '#1e6016';
-      ctx.beginPath();
-      ctx.arc(cx - crownR * 0.3, cy - trunkH - crownR, crownR2, 0, Math.PI * 2);
-      ctx.fill();
-      // Dritte Krone
-      ctx.fillStyle = '#3a8c28';
-      ctx.beginPath();
-      ctx.arc(cx + crownR * 0.35, cy - trunkH - crownR * 0.5, crownR2 * 0.9, 0, Math.PI * 2);
-      ctx.fill();
-      return;
-    }
-
-    // Stufe 9-10: Mächtiger alter Baum (Wurzeln, volle Krone, Lichtreflexe)
-    // Wurzeln
-    ctx.fillStyle = '#5c3a1e';
-    ctx.beginPath();
-    ctx.moveTo(cx - trunkW, cy - 4);
-    ctx.lineTo(cx - trunkW * 1.5, cy);
-    ctx.lineTo(cx - trunkW * 0.3, cy - 2);
-    ctx.closePath();
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(cx + trunkW, cy - 4);
-    ctx.lineTo(cx + trunkW * 1.5, cy);
-    ctx.lineTo(cx + trunkW * 0.3, cy - 2);
-    ctx.closePath();
-    ctx.fill();
-
-    // Dicke Äste
-    ctx.strokeStyle = '#5c3a1e';
-    ctx.lineWidth = Math.max(3, 4 * scale);
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - trunkH * 0.5);
-    ctx.lineTo(cx - crownR, cy - trunkH - crownR * 0.4);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - trunkH * 0.6);
-    ctx.lineTo(cx + crownR * 0.9, cy - trunkH - crownR * 0.3);
-    ctx.stroke();
-
-    // Große Haupt-Krone
-    ctx.fillStyle = '#2d7a1e';
-    ctx.beginPath();
-    ctx.arc(cx, cy - trunkH - crownR * 0.8, crownR * 1.1, 0, Math.PI * 2);
-    ctx.fill();
-    // Links
-    ctx.fillStyle = '#1e6016';
-    ctx.beginPath();
-    ctx.arc(cx - crownR * 0.5, cy - trunkH - crownR * 1.0, crownR2 * 1.1, 0, Math.PI * 2);
-    ctx.fill();
-    // Rechts
-    ctx.fillStyle = '#3a8c28';
-    ctx.beginPath();
-    ctx.arc(cx + crownR * 0.5, cy - trunkH - crownR * 0.6, crownR2, 0, Math.PI * 2);
-    ctx.fill();
-    // Oben
-    ctx.fillStyle = '#257818';
-    ctx.beginPath();
-    ctx.arc(cx - crownR * 0.1, cy - trunkH - crownR * 1.3, crownR2 * 0.8, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Lichtreflexe (Stufe 10)
-    if (stage === 10) {
-      ctx.fillStyle = 'rgba(255,255,200,0.15)';
-      ctx.beginPath();
-      ctx.arc(cx + crownR * 0.3, cy - trunkH - crownR * 1.0, crownR * 0.4, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Stufen-Anzeige (klein)
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.font = '9px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(`Stufe ${stage}`, cx, cy + 8);
-  }, [gameState, getTreeStage]);
+  }, [gameState, paintTree]);
 
   // Gebäude auf der Karte zeichnen (dynamisch aus placedBuildings)
-  const drawBuildings = useCallback((ctx, camera) => {
+  const drawBuildings = useCallback((ctx, camera, filter) => {
     if (!gameState) return;
 
-    const placed = gameState.placedBuildings || [];
+    const placed = filter
+      ? (gameState.placedBuildings || []).filter(filter)
+      : (gameState.placedBuildings || []);
+    if (placed.length === 0) return;
+    const atmo = atmoRef.current;
+
+    // Schattenwurf zuerst — Gebäude sollen auf dem Boden stehen, nicht darüber schweben
+    if (atmo) {
+      for (const building of placed) {
+        const cx = building.col * TILE_SIZE + camera.x + TILE_SIZE / 2;
+        const cy = building.row * TILE_SIZE + camera.y + TILE_SIZE - 6;
+        const big = building.type === 'shelter';
+        dropShadow(ctx, cx, cy, big ? 34 : 22, big ? 18 : 12, atmo, 1.4);
+        contactShadow(ctx, cx, cy, big ? 26 : 17, big ? 8 : 6, 0.3);
+      }
+    }
 
     for (const building of placed) {
       const bx = building.col * TILE_SIZE + camera.x;
@@ -1450,10 +1082,26 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
   }, [placementGhost, gameState, drawShelter, drawCampfire, drawWaterCollector]);
 
   // Tiere auf der Karte zeichnen
-  const drawAnimals = useCallback((ctx, camera) => {
+  // filter: optionale Auswahl, damit Tiere vor und hinter der Spielerin
+  // in zwei getrennten Durchgängen gezeichnet werden können (Tiefensortierung)
+  const drawAnimals = useCallback((ctx, camera, filter) => {
     if (!gameState?.animals || gameState.animals.length === 0) return;
+    const list = filter ? gameState.animals.filter(filter) : gameState.animals;
+    if (list.length === 0) return;
 
-    for (const animal of gameState.animals) {
+    // Erst alle Schatten, damit kein Tier auf dem Schatten eines anderen liegt
+    const atmo = atmoRef.current;
+    if (atmo) {
+      for (const animal of list) {
+        if (!ANIMAL_TYPES[animal.type]) continue;
+        const sx = animal.x + camera.x;
+        const sy = animal.y + camera.y + 12;
+        dropShadow(ctx, sx, sy, 17, 8, atmo, 1.2);
+        contactShadow(ctx, sx, sy, 12, 4.5, 0.26);
+      }
+    }
+
+    for (const animal of list) {
       const def = ANIMAL_TYPES[animal.type];
       if (!def) continue;
 
@@ -1464,455 +1112,29 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
 
       // Blickrichtung (für Flip)
       const facingLeft = animal.dirX < 0;
+      const isWalking = Math.abs(animal.dirX || 0) > 0.01 || Math.abs(animal.dirY || 0) > 0.01;
+
+      // Katzen wachsen: Kätzchen sind kleiner und rundlicher
+      let stageIdx = 2;
+      let sizeK = def.size / 26;
+      if (animal.type === 'cat') {
+        const kitten = getCatStage(animal.spawnedAt) === 'kitten';
+        stageIdx = kitten ? 0 : 2;
+        if (kitten) sizeK *= 0.78;
+      }
+
+      const sprite = getAnimalSprite(animal.type, stageIdx);
+
+      // Trippeln beim Laufen: leichtes Auf und Ab plus Nicken
+      const bob = isWalking ? Math.abs(Math.sin(Date.now() / 150)) * 1.8 : 0;
+      const tilt = isWalking ? Math.sin(Date.now() / 150) * 0.035 : 0;
 
       ctx.save();
-      if (facingLeft) {
-        ctx.translate(ax, ay);
-        ctx.scale(-1, 1);
-        ctx.translate(-ax, -ay);
-      }
-
-      switch (animal.type) {
-        case 'deer': {
-          // Reh - braun, elegant
-          // Schatten
-          ctx.fillStyle = 'rgba(0,0,0,0.15)';
-          ctx.beginPath();
-          ctx.ellipse(ax, ay + half + 2, half * 0.7, 3, 0, 0, Math.PI * 2);
-          ctx.fill();
-          // Körper
-          ctx.fillStyle = '#A0522D';
-          ctx.beginPath();
-          ctx.ellipse(ax, ay + 2, half * 0.7, half * 0.5, 0, 0, Math.PI * 2);
-          ctx.fill();
-          // Kopf
-          ctx.fillStyle = '#8B4513';
-          ctx.beginPath();
-          ctx.arc(ax + half * 0.5, ay - half * 0.2, half * 0.35, 0, Math.PI * 2);
-          ctx.fill();
-          // Geweih
-          ctx.strokeStyle = '#654321';
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.moveTo(ax + half * 0.5, ay - half * 0.5);
-          ctx.lineTo(ax + half * 0.7, ay - half);
-          ctx.lineTo(ax + half * 0.9, ay - half * 0.7);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(ax + half * 0.5, ay - half * 0.5);
-          ctx.lineTo(ax + half * 0.3, ay - half);
-          ctx.stroke();
-          // Auge
-          ctx.fillStyle = '#000';
-          ctx.beginPath();
-          ctx.arc(ax + half * 0.6, ay - half * 0.25, 1.5, 0, Math.PI * 2);
-          ctx.fill();
-          // Beine
-          ctx.strokeStyle = '#8B4513';
-          ctx.lineWidth = 2;
-          const legOff = animal.state === 'walking' ? Math.sin(Date.now() / 150) * 3 : 0;
-          ctx.beginPath();
-          ctx.moveTo(ax - half * 0.3, ay + half * 0.3);
-          ctx.lineTo(ax - half * 0.3, ay + half + legOff);
-          ctx.moveTo(ax + half * 0.3, ay + half * 0.3);
-          ctx.lineTo(ax + half * 0.3, ay + half - legOff);
-          ctx.stroke();
-          break;
-        }
-
-        case 'heron': {
-          // Reiher - grau-blau, langer Hals
-          ctx.fillStyle = 'rgba(0,0,0,0.12)';
-          ctx.beginPath();
-          ctx.ellipse(ax, ay + half + 2, half * 0.4, 2, 0, 0, Math.PI * 2);
-          ctx.fill();
-          // Körper
-          ctx.fillStyle = '#B0C4DE';
-          ctx.beginPath();
-          ctx.ellipse(ax, ay + 4, half * 0.5, half * 0.4, 0, 0, Math.PI * 2);
-          ctx.fill();
-          // Hals
-          ctx.strokeStyle = '#B0C4DE';
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.moveTo(ax + half * 0.3, ay);
-          ctx.quadraticCurveTo(ax + half * 0.4, ay - half * 0.5, ax + half * 0.2, ay - half * 0.8);
-          ctx.stroke();
-          // Kopf
-          ctx.fillStyle = '#9BB0C8';
-          ctx.beginPath();
-          ctx.arc(ax + half * 0.2, ay - half * 0.8, half * 0.22, 0, Math.PI * 2);
-          ctx.fill();
-          // Schnabel
-          ctx.fillStyle = '#DAA520';
-          ctx.beginPath();
-          ctx.moveTo(ax + half * 0.35, ay - half * 0.85);
-          ctx.lineTo(ax + half * 0.8, ay - half * 0.8);
-          ctx.lineTo(ax + half * 0.35, ay - half * 0.72);
-          ctx.closePath();
-          ctx.fill();
-          // Auge
-          ctx.fillStyle = '#000';
-          ctx.beginPath();
-          ctx.arc(ax + half * 0.25, ay - half * 0.83, 1.2, 0, Math.PI * 2);
-          ctx.fill();
-          // Beine (lang und dünn)
-          ctx.strokeStyle = '#DAA520';
-          ctx.lineWidth = 1.5;
-          const hLegOff = animal.state === 'walking' ? Math.sin(Date.now() / 200) * 4 : 0;
-          ctx.beginPath();
-          ctx.moveTo(ax - 2, ay + half * 0.3);
-          ctx.lineTo(ax - 2, ay + half + 2 + hLegOff);
-          ctx.moveTo(ax + 3, ay + half * 0.3);
-          ctx.lineTo(ax + 3, ay + half + 2 - hLegOff);
-          ctx.stroke();
-          break;
-        }
-
-        case 'goat': {
-          // Ziege - grau-braun, Hörner
-          ctx.fillStyle = 'rgba(0,0,0,0.15)';
-          ctx.beginPath();
-          ctx.ellipse(ax, ay + half + 2, half * 0.6, 3, 0, 0, Math.PI * 2);
-          ctx.fill();
-          // Körper
-          ctx.fillStyle = '#C4A882';
-          ctx.beginPath();
-          ctx.ellipse(ax, ay + 2, half * 0.65, half * 0.45, 0, 0, Math.PI * 2);
-          ctx.fill();
-          // Kopf
-          ctx.fillStyle = '#B89B6E';
-          ctx.beginPath();
-          ctx.arc(ax + half * 0.55, ay - half * 0.15, half * 0.3, 0, Math.PI * 2);
-          ctx.fill();
-          // Hörner
-          ctx.strokeStyle = '#8B7355';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(ax + half * 0.5, ay - half * 0.35);
-          ctx.quadraticCurveTo(ax + half * 0.3, ay - half * 0.8, ax + half * 0.5, ay - half * 0.7);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(ax + half * 0.6, ay - half * 0.35);
-          ctx.quadraticCurveTo(ax + half * 0.8, ay - half * 0.8, ax + half * 0.6, ay - half * 0.7);
-          ctx.stroke();
-          // Bart
-          ctx.strokeStyle = '#A0886B';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(ax + half * 0.65, ay);
-          ctx.lineTo(ax + half * 0.65, ay + half * 0.2);
-          ctx.stroke();
-          // Auge
-          ctx.fillStyle = '#000';
-          ctx.beginPath();
-          ctx.arc(ax + half * 0.6, ay - half * 0.2, 1.5, 0, Math.PI * 2);
-          ctx.fill();
-          // Beine
-          ctx.strokeStyle = '#B89B6E';
-          ctx.lineWidth = 2;
-          const gLegOff = animal.state === 'walking' ? Math.sin(Date.now() / 140) * 3 : 0;
-          ctx.beginPath();
-          ctx.moveTo(ax - half * 0.3, ay + half * 0.3);
-          ctx.lineTo(ax - half * 0.35, ay + half + gLegOff);
-          ctx.moveTo(ax + half * 0.2, ay + half * 0.3);
-          ctx.lineTo(ax + half * 0.25, ay + half - gLegOff);
-          ctx.stroke();
-          break;
-        }
-
-        case 'chicken': {
-          // Erwachsenes Huhn — beige/weiß mit roter Krone
-          ctx.fillStyle = 'rgba(0,0,0,0.15)';
-          ctx.beginPath();
-          ctx.ellipse(ax, ay + half + 2, half * 0.6, 3, 0, 0, Math.PI * 2);
-          ctx.fill();
-          // Körper (rundlich, weiß-beige)
-          ctx.fillStyle = '#F4E4A0';
-          ctx.beginPath();
-          ctx.ellipse(ax, ay + 2, half * 0.6, half * 0.5, 0, 0, Math.PI * 2);
-          ctx.fill();
-          // Bauch heller
-          ctx.fillStyle = '#FFF1B8';
-          ctx.beginPath();
-          ctx.ellipse(ax - 1, ay + 4, half * 0.4, half * 0.32, 0, 0, Math.PI * 2);
-          ctx.fill();
-          // Kopf
-          ctx.fillStyle = '#F4E4A0';
-          ctx.beginPath();
-          ctx.arc(ax + half * 0.45, ay - half * 0.2, half * 0.32, 0, Math.PI * 2);
-          ctx.fill();
-          // Schnabel (orange)
-          ctx.fillStyle = '#F58220';
-          ctx.beginPath();
-          ctx.moveTo(ax + half * 0.7, ay - half * 0.18);
-          ctx.lineTo(ax + half * 0.95, ay - half * 0.13);
-          ctx.lineTo(ax + half * 0.7, ay - half * 0.05);
-          ctx.closePath();
-          ctx.fill();
-          // Hahnenkamm (rot, gewellt)
-          ctx.fillStyle = '#D03030';
-          ctx.beginPath();
-          ctx.arc(ax + half * 0.35, ay - half * 0.55, 2.5, 0, Math.PI * 2);
-          ctx.arc(ax + half * 0.5, ay - half * 0.62, 2.5, 0, Math.PI * 2);
-          ctx.arc(ax + half * 0.6, ay - half * 0.5, 2.2, 0, Math.PI * 2);
-          ctx.fill();
-          // Kehllappen (rot, unter dem Schnabel)
-          ctx.fillStyle = '#D03030';
-          ctx.beginPath();
-          ctx.ellipse(ax + half * 0.6, ay + half * 0.05, 1.8, 2.5, 0, 0, Math.PI * 2);
-          ctx.fill();
-          // Auge
-          ctx.fillStyle = '#000';
-          ctx.beginPath();
-          ctx.arc(ax + half * 0.55, ay - half * 0.25, 1.2, 0, Math.PI * 2);
-          ctx.fill();
-          // Glanzpunkt im Auge
-          ctx.fillStyle = '#fff';
-          ctx.beginPath();
-          ctx.arc(ax + half * 0.58, ay - half * 0.27, 0.4, 0, Math.PI * 2);
-          ctx.fill();
-          // Flügel (kleiner Kreis am Körper)
-          ctx.fillStyle = '#E8C870';
-          ctx.beginPath();
-          ctx.ellipse(ax - half * 0.15, ay + 1, half * 0.3, half * 0.22, -0.2, 0, Math.PI * 2);
-          ctx.fill();
-          // Beine (gelb-orange)
-          ctx.strokeStyle = '#F58220';
-          ctx.lineWidth = 1.8;
-          const chLegOff = animal.state === 'walking' ? Math.sin(Date.now() / 180) * 2 : 0;
-          ctx.beginPath();
-          ctx.moveTo(ax - half * 0.15, ay + half * 0.35);
-          ctx.lineTo(ax - half * 0.2, ay + half + 1 + chLegOff);
-          ctx.moveTo(ax + half * 0.15, ay + half * 0.35);
-          ctx.lineTo(ax + half * 0.2, ay + half + 1 - chLegOff);
-          ctx.stroke();
-          // Füße (3 kleine Striche)
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(ax - half * 0.2, ay + half + 1 + chLegOff);
-          ctx.lineTo(ax - half * 0.32, ay + half + 2 + chLegOff);
-          ctx.moveTo(ax - half * 0.2, ay + half + 1 + chLegOff);
-          ctx.lineTo(ax - half * 0.08, ay + half + 2 + chLegOff);
-          ctx.moveTo(ax + half * 0.2, ay + half + 1 - chLegOff);
-          ctx.lineTo(ax + half * 0.32, ay + half + 2 - chLegOff);
-          ctx.moveTo(ax + half * 0.2, ay + half + 1 - chLegOff);
-          ctx.lineTo(ax + half * 0.08, ay + half + 2 - chLegOff);
-          ctx.stroke();
-          break;
-        }
-
-        case 'rabbit': {
-          // Hase - klein, lange Ohren
-          ctx.fillStyle = 'rgba(0,0,0,0.1)';
-          ctx.beginPath();
-          ctx.ellipse(ax, ay + half, half * 0.5, 2, 0, 0, Math.PI * 2);
-          ctx.fill();
-          // Körper
-          ctx.fillStyle = '#D2B48C';
-          ctx.beginPath();
-          ctx.ellipse(ax, ay + 2, half * 0.55, half * 0.45, 0, 0, Math.PI * 2);
-          ctx.fill();
-          // Kopf
-          ctx.fillStyle = '#C8A87A';
-          ctx.beginPath();
-          ctx.arc(ax + half * 0.4, ay - half * 0.1, half * 0.35, 0, Math.PI * 2);
-          ctx.fill();
-          // Ohren
-          ctx.fillStyle = '#D2B48C';
-          ctx.beginPath();
-          ctx.ellipse(ax + half * 0.25, ay - half * 0.7, 2.5, half * 0.35, -0.2, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.beginPath();
-          ctx.ellipse(ax + half * 0.5, ay - half * 0.7, 2.5, half * 0.35, 0.2, 0, Math.PI * 2);
-          ctx.fill();
-          // Ohr-Inneres (rosa)
-          ctx.fillStyle = '#E8B4B4';
-          ctx.beginPath();
-          ctx.ellipse(ax + half * 0.25, ay - half * 0.7, 1.2, half * 0.2, -0.2, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.beginPath();
-          ctx.ellipse(ax + half * 0.5, ay - half * 0.7, 1.2, half * 0.2, 0.2, 0, Math.PI * 2);
-          ctx.fill();
-          // Auge
-          ctx.fillStyle = '#000';
-          ctx.beginPath();
-          ctx.arc(ax + half * 0.5, ay - half * 0.15, 1.2, 0, Math.PI * 2);
-          ctx.fill();
-          // Schwanz (Puschel)
-          ctx.fillStyle = '#E8DCC8';
-          ctx.beginPath();
-          ctx.arc(ax - half * 0.5, ay + 2, 3, 0, Math.PI * 2);
-          ctx.fill();
-          // (Hase hüpft über die Bewegungs-AI)
-          break;
-        }
-
-        case 'cat': {
-          // Katze — Kätzchen (65% Größe) oder Erwachsen (100%)
-          const catStage = getCatStage(animal.spawnedAt);
-          const catScale = catStage === 'kitten' ? 0.65 : 1.0;
-          const cs = s * catScale;
-          const cHalf = cs / 2;
-          const isSleeping = animal.catState === 'sleeping';
-          const isWalking = animal.catState === 'slow_walk' || animal.catState === 'fast_walk';
-          const walkSpeed = animal.catState === 'fast_walk' ? 120 : 200;
-
-          // Schatten
-          ctx.fillStyle = 'rgba(0,0,0,0.15)';
-          ctx.beginPath();
-          ctx.ellipse(ax, ay + cHalf + 2, cHalf * 0.7, 3 * catScale, 0, 0, Math.PI * 2);
-          ctx.fill();
-
-          if (isSleeping) {
-            // Schlafend: zusammengerollt
-            ctx.fillStyle = '#F5A623';
-            ctx.beginPath();
-            ctx.ellipse(ax, ay + 2, cHalf * 0.6, cHalf * 0.4, 0, 0, Math.PI * 2);
-            ctx.fill();
-            // Kopf auf Körper
-            ctx.fillStyle = '#E09510';
-            ctx.beginPath();
-            ctx.arc(ax + cHalf * 0.3, ay - cHalf * 0.1, cHalf * 0.3, 0, Math.PI * 2);
-            ctx.fill();
-            // Geschlossene Augen (Striche)
-            ctx.strokeStyle = '#000';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(ax + cHalf * 0.2, ay - cHalf * 0.15);
-            ctx.lineTo(ax + cHalf * 0.4, ay - cHalf * 0.15);
-            ctx.stroke();
-            // Schwanz eingerollt
-            ctx.strokeStyle = '#E09510';
-            ctx.lineWidth = 2 * catScale;
-            ctx.beginPath();
-            ctx.arc(ax - cHalf * 0.2, ay + cHalf * 0.15, cHalf * 0.35, 0.5, Math.PI * 1.5);
-            ctx.stroke();
-            // z z z
-            ctx.fillStyle = 'rgba(255,255,255,0.5)';
-            ctx.font = `${8 * catScale}px sans-serif`;
-            const bob = Math.sin(Date.now() / 600) * 2;
-            ctx.fillText('z', ax + cHalf * 0.5, ay - cHalf * 0.5 + bob);
-            ctx.fillText('z', ax + cHalf * 0.7, ay - cHalf * 0.8 + bob * 0.7);
-          } else {
-            // Wach: stehend / laufend
-            // Körper
-            ctx.fillStyle = '#F5A623';
-            ctx.beginPath();
-            ctx.ellipse(ax, ay + 2, cHalf * 0.6, cHalf * 0.45, 0, 0, Math.PI * 2);
-            ctx.fill();
-            // Kopf
-            ctx.fillStyle = '#E09510';
-            ctx.beginPath();
-            ctx.arc(ax + cHalf * 0.5, ay - cHalf * 0.15, cHalf * 0.32, 0, Math.PI * 2);
-            ctx.fill();
-            // Ohren (Dreiecke)
-            ctx.fillStyle = '#F5A623';
-            ctx.beginPath();
-            ctx.moveTo(ax + cHalf * 0.3, ay - cHalf * 0.4);
-            ctx.lineTo(ax + cHalf * 0.2, ay - cHalf * 0.75);
-            ctx.lineTo(ax + cHalf * 0.45, ay - cHalf * 0.45);
-            ctx.closePath();
-            ctx.fill();
-            ctx.beginPath();
-            ctx.moveTo(ax + cHalf * 0.55, ay - cHalf * 0.4);
-            ctx.lineTo(ax + cHalf * 0.75, ay - cHalf * 0.75);
-            ctx.lineTo(ax + cHalf * 0.7, ay - cHalf * 0.35);
-            ctx.closePath();
-            ctx.fill();
-            // Ohr-Inneres (rosa)
-            ctx.fillStyle = '#FFB6C1';
-            ctx.beginPath();
-            ctx.moveTo(ax + cHalf * 0.32, ay - cHalf * 0.42);
-            ctx.lineTo(ax + cHalf * 0.25, ay - cHalf * 0.65);
-            ctx.lineTo(ax + cHalf * 0.43, ay - cHalf * 0.45);
-            ctx.closePath();
-            ctx.fill();
-            ctx.beginPath();
-            ctx.moveTo(ax + cHalf * 0.57, ay - cHalf * 0.42);
-            ctx.lineTo(ax + cHalf * 0.7, ay - cHalf * 0.65);
-            ctx.lineTo(ax + cHalf * 0.67, ay - cHalf * 0.37);
-            ctx.closePath();
-            ctx.fill();
-            // Augen
-            ctx.fillStyle = '#000';
-            ctx.beginPath();
-            ctx.arc(ax + cHalf * 0.42, ay - cHalf * 0.2, 1.5 * catScale, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.beginPath();
-            ctx.arc(ax + cHalf * 0.58, ay - cHalf * 0.2, 1.5 * catScale, 0, Math.PI * 2);
-            ctx.fill();
-            // Nase (kleines rosa Dreieck)
-            ctx.fillStyle = '#FF69B4';
-            ctx.beginPath();
-            ctx.moveTo(ax + cHalf * 0.5, ay - cHalf * 0.08);
-            ctx.lineTo(ax + cHalf * 0.46, ay - cHalf * 0.02);
-            ctx.lineTo(ax + cHalf * 0.54, ay - cHalf * 0.02);
-            ctx.closePath();
-            ctx.fill();
-            // Schnurrhaare
-            ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-            ctx.lineWidth = 0.5;
-            // Links
-            ctx.beginPath();
-            ctx.moveTo(ax + cHalf * 0.35, ay - cHalf * 0.05);
-            ctx.lineTo(ax + cHalf * 0.05, ay - cHalf * 0.12);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(ax + cHalf * 0.35, ay);
-            ctx.lineTo(ax + cHalf * 0.05, ay + cHalf * 0.05);
-            ctx.stroke();
-            // Rechts
-            ctx.beginPath();
-            ctx.moveTo(ax + cHalf * 0.65, ay - cHalf * 0.05);
-            ctx.lineTo(ax + cHalf * 0.95, ay - cHalf * 0.12);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(ax + cHalf * 0.65, ay);
-            ctx.lineTo(ax + cHalf * 0.95, ay + cHalf * 0.05);
-            ctx.stroke();
-            // Schwanz (kurviger Strich)
-            ctx.strokeStyle = '#E09510';
-            ctx.lineWidth = 2.5 * catScale;
-            ctx.lineCap = 'round';
-            ctx.beginPath();
-            ctx.moveTo(ax - cHalf * 0.55, ay + 2);
-            ctx.quadraticCurveTo(
-              ax - cHalf * 0.9, ay - cHalf * 0.3,
-              ax - cHalf * 0.7, ay - cHalf * 0.5
-            );
-            ctx.stroke();
-            ctx.lineCap = 'butt';
-            // Beine (mit Laufanimation)
-            ctx.strokeStyle = '#E09510';
-            ctx.lineWidth = 2 * catScale;
-            const cLegOff = isWalking ? Math.sin(Date.now() / walkSpeed) * 3 * catScale : 0;
-            ctx.beginPath();
-            ctx.moveTo(ax - cHalf * 0.25, ay + cHalf * 0.3);
-            ctx.lineTo(ax - cHalf * 0.25, ay + cHalf + cLegOff);
-            ctx.moveTo(ax + cHalf * 0.15, ay + cHalf * 0.3);
-            ctx.lineTo(ax + cHalf * 0.15, ay + cHalf - cLegOff);
-            ctx.stroke();
-            // Hinterbeine
-            ctx.beginPath();
-            ctx.moveTo(ax - cHalf * 0.1, ay + cHalf * 0.3);
-            ctx.lineTo(ax - cHalf * 0.1, ay + cHalf - cLegOff * 0.5);
-            ctx.moveTo(ax + cHalf * 0.3, ay + cHalf * 0.3);
-            ctx.lineTo(ax + cHalf * 0.3, ay + cHalf + cLegOff * 0.5);
-            ctx.stroke();
-          }
-          break;
-        }
-
-        default:
-          // Fallback: einfacher Kreis
-          ctx.fillStyle = def.color;
-          ctx.beginPath();
-          ctx.arc(ax, ay, half, 0, Math.PI * 2);
-          ctx.fill();
-          break;
-      }
-
+      ctx.translate(ax, ay + 10 - bob);
+      if (facingLeft) ctx.scale(-1, 1);
+      ctx.rotate(tilt);
+      ctx.scale(sizeK, sizeK);
+      ctx.drawImage(sprite, -A_W / 2, -A_GROUND);
       ctx.restore();
 
       // Katzen: Zuneigungsbalken (rosa) statt Hungerbalken
@@ -2015,181 +1237,101 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
     }
   }, [gameState]);
 
-  // Unkraut auf der Karte zeichnen (3 Stufen)
-  const drawWeeds = useCallback((ctx, camera) => {
+  // Unkraut in drei Stufen: Keimling, Büschel, wucherndes Dickicht.
+  // Wächst mit demselben Windfeld wie der Rest der Vegetation und hebt
+  // sich durch kühleres, dunkleres Grün von der Wiese ab.
+  const drawWeeds = useCallback((ctx, camera, t, windAmt) => {
     if (!gameState?.weeds || gameState.weeds.length === 0) return;
+    const atmo = atmoRef.current;
 
     for (const weed of gameState.weeds) {
-      const wx = weed.col * TILE_SIZE + camera.x;
-      const wy = weed.row * TILE_SIZE + camera.y;
-      const cx = wx + TILE_SIZE / 2;
-      const cy = wy + TILE_SIZE / 2;
+      const cx = weed.col * TILE_SIZE + camera.x + TILE_SIZE / 2;
+      const cy = weed.row * TILE_SIZE + camera.y + TILE_SIZE / 2 + 10;
+      const stage = Math.max(1, Math.min(3, weed.stage || 1));
+      const seed = weed.col * 131 + weed.row * 977;
 
-      const time = Date.now() / 2000;
-      const sway = Math.sin(time + weed.col * 2 + weed.row * 3) * 1.5;
+      // Sichtbarer Bodenfleck: hier ist die Wiese verdrängt
+      if (stage >= 2) {
+        contactShadow(ctx, cx, cy, 13 + stage * 4, 5 + stage * 1.6, 0.16);
+      }
+      if (atmo && stage === 3) {
+        dropShadow(ctx, cx, cy, 15, 8, atmo, 0.7);
+      }
 
-      switch (weed.stage) {
-        case 1: {
-          // Stufe 1: Kleine Keimlinge (sichtbare gruene Sproesslinge)
-          // Dunkleres Gruen damit es sich vom Gras abhebt
-          ctx.strokeStyle = '#3D6B0F';
-          ctx.lineWidth = 2.5;
+      const bend = sway(cx, cy, t, windAmt, 0.9);
+
+      // Halmzahl und Höhe wachsen mit der Stufe
+      const blades = stage === 1 ? 4 : stage === 2 ? 9 : 16;
+      const maxH = stage === 1 ? 12 : stage === 2 ? 22 : 34;
+      const spread = stage === 1 ? 8 : stage === 2 ? 15 : 24;
+
+      for (let i = 0; i < blades; i++) {
+        const r1 = hash2(seed, i, 11);
+        const r2 = hash2(seed, i, 23);
+        const r3 = hash2(seed, i, 37);
+
+        const bx = cx + (r1 - 0.5) * spread * 2;
+        const by = cy + (r2 - 0.5) * spread * 0.5;
+        const hgt = maxH * (0.55 + r3 * 0.55);
+        // Weiter oben biegt sich der Halm stärker
+        const tipX = bx + bend * (1.2 + hgt / maxH) + (r1 - 0.5) * 5;
+
+        // Kühles, sattes Grün — deutlich anders als das Wiesengrün
+        const g = ctx.createLinearGradient(bx, by, tipX, by - hgt);
+        g.addColorStop(0, '#2c4a16');
+        g.addColorStop(0.6, `rgb(${58 + r2 * 24 | 0},${104 + r3 * 30 | 0},${34 + r1 * 18 | 0})`);
+        g.addColorStop(1, `rgb(${96 + r1 * 40 | 0},${146 + r2 * 34 | 0},${58 + r3 * 24 | 0})`);
+        ctx.strokeStyle = g;
+        ctx.lineWidth = 1.6 + stage * 0.35;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(bx, by);
+        ctx.quadraticCurveTo(bx + bend * 0.4, by - hgt * 0.55, tipX, by - hgt);
+        ctx.stroke();
+
+        // Blattfahnen am Halm
+        if (stage >= 2 && r3 > 0.45) {
+          const ly = by - hgt * 0.5;
+          const dir = r1 > 0.5 ? 1 : -1;
+          ctx.fillStyle = `rgba(${62 + r2 * 30 | 0},${112 + r3 * 28 | 0},40,0.85)`;
           ctx.beginPath();
-          ctx.moveTo(cx - 7, cy + 12);
-          ctx.quadraticCurveTo(cx - 6 + sway * 0.5, cy + 4, cx - 5 + sway, cy - 4);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(cx + 5, cy + 12);
-          ctx.quadraticCurveTo(cx + 4 + sway * 0.5, cy + 4, cx + 6 + sway, cy - 2);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(cx - 1, cy + 12);
-          ctx.quadraticCurveTo(cx + sway * 0.3, cy + 4, cx + sway * 0.5, cy);
-          ctx.stroke();
-          // Kleine Blaettchen an den Spitzen
-          ctx.fillStyle = '#4A8C1B';
-          ctx.beginPath();
-          ctx.ellipse(cx - 5 + sway, cy - 5, 3, 2, -0.4, 0, Math.PI * 2);
+          ctx.ellipse(bx + dir * 3.4 + bend * 0.3, ly, 4.4, 1.7, dir * 0.5, 0, Math.PI * 2);
           ctx.fill();
-          ctx.beginPath();
-          ctx.ellipse(cx + 6 + sway, cy - 3, 3, 2, 0.4, 0, Math.PI * 2);
-          ctx.fill();
-          break;
         }
-        case 2: {
-          // Stufe 2: Mittelgroßes gruenes Unkraut (dickere Halme, Blaetter)
-          ctx.strokeStyle = '#556B2F';
-          ctx.lineWidth = 2;
+      }
+
+      // Stufe 3: Samenstände und Ranken — wucherndes Dickicht
+      if (stage === 3) {
+        for (let i = 0; i < 5; i++) {
+          const r1 = hash2(seed, i, 53);
+          const r2 = hash2(seed, i, 67);
+          const sx = cx + (r1 - 0.5) * spread * 1.8 + bend * 1.6;
+          const sy = cy - maxH * (0.75 + r2 * 0.3);
+          ctx.fillStyle = 'rgba(150,138,74,0.9)';
           ctx.beginPath();
-          ctx.moveTo(cx - 4, cy + 12);
-          ctx.quadraticCurveTo(cx - 3 + sway * 0.5, cy + 2, cx - 6 + sway, cy - 8);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(cx + 4, cy + 12);
-          ctx.quadraticCurveTo(cx + 3 + sway * 0.5, cy, cx + 7 + sway, cy - 6);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(cx, cy + 12);
-          ctx.quadraticCurveTo(cx + sway * 0.3, cy + 2, cx + sway * 0.5, cy - 4);
-          ctx.stroke();
-          // Gruene Blaetter
-          ctx.fillStyle = '#7CBA3E';
-          ctx.beginPath();
-          ctx.ellipse(cx - 6 + sway, cy - 9, 5, 3, -0.3, 0, Math.PI * 2);
+          ctx.ellipse(sx, sy, 2, 4.4, bend * 0.06, 0, Math.PI * 2);
           ctx.fill();
-          ctx.beginPath();
-          ctx.ellipse(cx + 7 + sway, cy - 7, 5, 3, 0.3, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = '#8ED450';
-          ctx.beginPath();
-          ctx.ellipse(cx + sway * 0.5, cy - 5, 4, 2.5, 0, 0, Math.PI * 2);
-          ctx.fill();
-          break;
+          // Grannen
+          ctx.strokeStyle = 'rgba(174,164,102,0.7)';
+          ctx.lineWidth = 0.7;
+          for (let k = -1; k <= 1; k++) {
+            ctx.beginPath();
+            ctx.moveTo(sx, sy - 3);
+            ctx.lineTo(sx + k * 3.5, sy - 8);
+            ctx.stroke();
+          }
         }
-        case 3:
-        default: {
-          // Stufe 3: Goldenes Heu (voll ausgewachsen, deutlich anders als Stufe 2)
-          // Basis: bueschel aus goldenen Halmen
-          ctx.strokeStyle = '#C4A035';
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.moveTo(cx - 8, cy + 16);
-          ctx.quadraticCurveTo(cx - 6 + sway, cy - 2, cx - 12 + sway * 2, cy - 18);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(cx - 2, cy + 16);
-          ctx.quadraticCurveTo(cx - 1 + sway * 0.5, cy - 4, cx - 3 + sway, cy - 22);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(cx + 4, cy + 16);
-          ctx.quadraticCurveTo(cx + 3 + sway * 0.8, cy - 2, cx + 2 + sway, cy - 20);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(cx + 10, cy + 16);
-          ctx.quadraticCurveTo(cx + 8 + sway, cy, cx + 14 + sway * 2, cy - 16);
-          ctx.stroke();
-          // Dicke goldene Aehren oben
-          ctx.fillStyle = '#DAB94E';
-          ctx.beginPath();
-          ctx.ellipse(cx - 12 + sway * 2, cy - 20, 4, 7, -0.3, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.beginPath();
-          ctx.ellipse(cx - 3 + sway, cy - 24, 4, 7, 0.1, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.beginPath();
-          ctx.ellipse(cx + 2 + sway, cy - 22, 4, 7, 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.beginPath();
-          ctx.ellipse(cx + 14 + sway * 2, cy - 18, 4, 6, 0.3, 0, Math.PI * 2);
-          ctx.fill();
-          // Goldener Schimmer
-          ctx.fillStyle = 'rgba(255, 215, 0, 0.2)';
-          ctx.beginPath();
-          ctx.ellipse(cx + sway, cy - 6, 18, 20, 0, 0, Math.PI * 2);
-          ctx.fill();
-          break;
-        }
+        // Kriechende Ranke am Boden
+        ctx.strokeStyle = 'rgba(64,104,38,0.6)';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(cx - 20, cy + 3);
+        ctx.quadraticCurveTo(cx, cy + 8, cx + 20, cy + 2);
+        ctx.stroke();
       }
     }
   }, [gameState]);
 
-  // Gepflanzte Bäume zeichnen (wachsen über Zeit)
-  const drawPlantedTrees = useCallback((ctx, camera) => {
-    if (!gameState?.plantedTrees || gameState.plantedTrees.length === 0) return;
-
-    for (const tree of gameState.plantedTrees) {
-      const tx = tree.col * TILE_SIZE + camera.x;
-      const ty = tree.row * TILE_SIZE + camera.y;
-      const cx = tx + TILE_SIZE / 2;
-      const cy = ty + TILE_SIZE;
-
-      // Stufe berechnen: 365 Tage = Stufe 10
-      const daysElapsed = (Date.now() - tree.plantedAt) / (24 * 60 * 60 * 1000);
-      const stage = Math.max(1, Math.min(10, Math.floor((daysElapsed / 365) * 10) + 1));
-
-      // Skalierung (kleiner als Hauptbaum, ~60% Größe)
-      const baseScale = 0.6;
-      const scale = (0.25 + (stage - 1) * (0.75 / 9)) * baseScale;
-
-      const trunkH = 90 * scale;
-      const trunkW = Math.max(4, 30 * scale);
-      const crownR = Math.max(6, 66 * scale);
-
-      // Schatten
-      ctx.fillStyle = 'rgba(0,0,0,0.1)';
-      ctx.beginPath();
-      ctx.ellipse(cx, cy - 2, crownR * 0.5, 3 * scale, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Stamm
-      ctx.fillStyle = stage <= 3 ? '#8B7355' : '#5c3a1e';
-      ctx.fillRect(cx - trunkW / 2, cy - trunkH - 4, trunkW, trunkH);
-
-      if (stage <= 2) {
-        // Setzling
-        ctx.fillStyle = '#4CAF50';
-        ctx.beginPath();
-        ctx.ellipse(cx, cy - trunkH - 6, crownR * 0.8, crownR * 0.9, 0, 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        // Krone
-        ctx.fillStyle = '#2d7a1e';
-        ctx.beginPath();
-        ctx.arc(cx, cy - trunkH - crownR * 0.6, crownR, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#1e6016';
-        ctx.beginPath();
-        ctx.arc(cx - crownR * 0.2, cy - trunkH - crownR * 0.8, crownR * 0.7, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      // Stufen-Anzeige
-      ctx.fillStyle = 'rgba(255,255,255,0.5)';
-      ctx.font = '8px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(`Stufe ${stage}`, cx, cy + 6);
-    }
-  }, [gameState]);
 
   // Gepflanzte Blumen zeichnen (wachsen 5 Tage, dann volle Blüte)
   const drawFlowers = useCallback((ctx, camera) => {
@@ -2309,58 +1451,8 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
     }
   }, []);
 
-  // Wetter-Overlay (optimiert: alle Tropfen in einem einzigen Path gezeichnet
-  // statt 200 einzelner stroke()-Aufrufe pro Frame)
-  const drawWeather = useCallback((ctx, width, height) => {
-    const state = gameStateRef.current;
-    if (!state || state.weather !== 'rainy') return;
-
-    const time = Date.now();
-
-    // Dunkler Himmel-Overlay (zuerst, damit Tropfen darüber liegen)
-    ctx.fillStyle = 'rgba(0, 10, 30, 0.2)';
-    ctx.fillRect(0, 0, width, height);
-
-    // Regentropfen - alle in einem Batch (1 stroke statt 200)
-    const dropCount = 150;
-    const speed = time / 30;
-
-    ctx.strokeStyle = 'rgba(160, 190, 230, 0.25)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-
-    for (let i = 0; i < dropCount; i++) {
-      const seed = i * 7919 + 1327;
-      const xBase = (seed * 13) % width;
-      const ySpeed = 4 + (seed % 3);
-      const dropLen = 10 + (seed % 12);
-
-      const x = (xBase + speed * 0.3) % (width + 40) - 20;
-      const y = (speed * ySpeed + (seed * 47) % height) % (height + dropLen) - dropLen;
-
-      ctx.moveTo(x, y);
-      ctx.lineTo(x - 3, y + dropLen);
-    }
-
-    ctx.stroke();
-
-    // Splash-Effekte am Boden - ebenfalls gebatcht
-    ctx.fillStyle = 'rgba(160, 190, 230, 0.15)';
-    ctx.beginPath();
-    for (let i = 0; i < 20; i++) {
-      const seed = i * 3571 + 997;
-      const sx = (seed * 29 + time / 8) % width;
-      const sy = height - 20 + (seed % 40);
-      const phase = (time / 200 + seed) % 1;
-
-      if (phase < 0.3) {
-        const radius = phase * 8;
-        ctx.moveTo(sx + radius, sy);
-        ctx.arc(sx, sy, radius, 0, Math.PI * 2);
-      }
-    }
-    ctx.fill();
-  }, []);
+  // Wetter wird jetzt in render/particles.js gezeichnet (drawRain/drawSplashes)
+  // und über den Licht-Pass eingefärbt.
 
   // Ausgangs-Markierungen zeichnen
   // Besucher-Avatar zeichnen
@@ -2483,11 +1575,46 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
   // Draw-Funktionen immer aktuell halten (werden bei gameState-Änderungen neu erstellt,
   // aber der Render-Loop liest sie per Ref → kein RAF-Neustart nötig)
   drawFnsRef.current = {
-    getCameraOffset, getScale, drawTile, drawPlayer, drawBuildings,
+    getCameraOffset, getScale, drawPlayer, drawBuildings,
     drawGrowingTree, drawDroppedSeeds, drawWeeds, drawPlantedTrees,
-    drawFlowers, drawAnimals, drawPlacementGhost, drawWeather, drawExitMarkers,
+    drawFlowers, drawAnimals, drawPlacementGhost, drawExitMarkers,
     drawVisitor, drawHostAvatar,
+    drawWaterSurface, drawWaterRain, drawWindRipples, drawEdgeFlora, drawSnowCover,
+    getTerrainCanvas,
   };
+
+  // Sammelt alle Lichtquellen der Szene in Bildschirmkoordinaten.
+  // Nachts hebt das Lagerfeuer die Umgebung an, Hütten bekommen
+  // warmes Fensterlicht.
+  const collectLights = useCallback((state, camera, scale, t) => {
+    const lights = [];
+    const toScreen = (wx, wy) => ({ x: wx * scale + camera.x, y: wy * scale + camera.y });
+
+    for (const b of state.placedBuildings || []) {
+      const wx = b.col * TILE_SIZE + TILE_SIZE / 2;
+      if (b.type === 'campfire') {
+        const p = toScreen(wx, b.row * TILE_SIZE + 40);
+        const flick = 0.82 + valueNoise(t * 6, b.col * 7 + b.row, 53) * 0.36;
+        lights.push({
+          x: p.x, y: p.y,
+          radius: 215 * scale * flick,
+          color: [255, 148, 56],
+          intensity: 1.2 * flick,
+        });
+      } else if (b.type === 'shelter' && (b.level || 1) >= 2) {
+        const p = toScreen(wx, b.row * TILE_SIZE + 42);
+        lights.push({
+          x: p.x, y: p.y,
+          radius: 96 * scale,
+          color: [255, 192, 112],
+          intensity: 0.5,
+        });
+      }
+    }
+    return lights;
+  }, []);
+  const collectLightsRef = useRef(collectLights);
+  collectLightsRef.current = collectLights;
 
   // Render-Loop: Startet nur einmal und liest alles aus Refs.
   // Vorher wurde der Loop bei jedem gameState-Update (jede Sekunde) komplett
@@ -2497,7 +1624,7 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
-    let lastW = 0, lastH = 0;
+    let lastW = 0, lastH = 0, lastDpr = 0;
 
     const render = () => {
       const state = gameStateRef.current;
@@ -2508,87 +1635,208 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
 
       const fns = drawFnsRef.current;
       const vm = visitModeRef.current;
+      const t = Date.now() / 1000;
 
-      // Canvas-Größe nur setzen wenn nötig (reset löscht GPU-Buffer)
       const w = canvasSize.width;
       const h = canvasSize.height;
-      if (lastW !== w || lastH !== h) {
-        canvas.width = w;
-        canvas.height = h;
-        lastW = w;
-        lastH = h;
-      } else {
-        ctx.clearRect(0, 0, w, h);
+      // Retina-Auflösung: ohne das ist auf dem Handy alles weichgezeichnet.
+      // Auf 2 begrenzt, damit 3x-Displays nicht 9-fache Pixelmenge rendern.
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+
+      if (lastW !== w || lastH !== h || lastDpr !== dpr) {
+        canvas.width = Math.round(w * dpr);
+        canvas.height = Math.round(h * dpr);
+        canvas.style.width = w + 'px';
+        canvas.style.height = h + 'px';
+        lastW = w; lastH = h; lastDpr = dpr;
       }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+
+      // --- Lichtstimmung aus echter Uhrzeit + Wetter ---
+      // timeOverride: vom Cheat „zeit <stunde>" gesetzt, sonst echte Uhrzeit.
+      const atmo = applyWeather(
+        getAtmosphere(new Date(), state.timeOverride ?? null),
+        state.weather
+      );
+      atmoRef.current = atmo;
+      const wet = !!atmo.wet;                 // Regen oder Gewitter
+      const snowy = !!atmo.snow;
+      const stormy = !!atmo.storm;
+      const foggy = !!atmo.fog;
+      const hot = !!atmo.heat;
+      const windAmt = windStrength(t, wet) * (stormy ? 1.9 : 1) * (hot ? 0.35 : 1);
 
       const camera = fns.getCameraOffset();
       const scale = fns.getScale();
 
-      // Hintergrund
-      ctx.fillStyle = '#1a1a2e';
+      // --- Hintergrund hinter der Insel (Himmel + Sterne) ---
+      const sky = atmo.sky;
+      const bg = ctx.createLinearGradient(0, 0, 0, h);
+      bg.addColorStop(0, `rgb(${sky[0] | 0},${sky[1] | 0},${sky[2] | 0})`);
+      bg.addColorStop(1, `rgb(${sky[0] * 0.55 | 0},${sky[1] * 0.55 | 0},${sky[2] * 0.6 | 0})`);
+      ctx.fillStyle = bg;
       ctx.fillRect(0, 0, w, h);
+      drawStars(ctx, t, w, h, atmo.starAlpha * 0.9);
 
-      // Skalierung anwenden
       ctx.save();
       ctx.translate(camera.x, camera.y);
       ctx.scale(scale, scale);
 
-      // Kacheln zeichnen (ohne Kamera-Offset, da bereits via transform)
       const zeroCamera = { x: 0, y: 0 };
-      for (let row = 0; row < MAP_ROWS; row++) {
-        for (let col = 0; col < MAP_COLS; col++) {
-          fns.drawTile(ctx, col, row, homeMap[row][col], zeroCamera);
-        }
-      }
 
-      // Gebäude
-      fns.drawBuildings(ctx, zeroCamera);
+      // --- Boden ---
+      ctx.drawImage(fns.getTerrainCanvas(), 0, 0);
+      fns.drawWaterSurface(ctx, t, atmo);
+      if (wet) fns.drawWaterRain(ctx, t);
+      fns.drawWindRipples(ctx, t, windAmt * (wet ? 0.4 : 1));
+      if (snowy) fns.drawSnowCover(ctx, t);
 
-      // Wachsender Baum
-      fns.drawGrowingTree(ctx, zeroCamera);
+      // --- Laternenweg der Fokus-Serie ---
+      const lanternGlow = Math.min(1, Math.max(0, atmo.darkness * 1.7));
+      lanternLightsRef.current = drawLanternPath(
+        ctx, activeLanterns(state.streak), lanternGlow, t
+      );
 
-      // Abgeworfene Samen
+      // --- Bodennahe Objekte ---
+      fns.drawWeeds(ctx, zeroCamera, t, windAmt);
       fns.drawDroppedSeeds(ctx, zeroCamera);
-
-      // Unkraut
-      fns.drawWeeds(ctx, zeroCamera);
-
-      // Gepflanzte Bäume
-      fns.drawPlantedTrees(ctx, zeroCamera);
-
-      // Gepflanzte Blumen
       fns.drawFlowers(ctx, zeroCamera);
 
-      // Tiere
-      fns.drawAnimals(ctx, zeroCamera);
+      // --- Aufrechte Objekte, von hinten nach vorn sortiert ---
+      // Ohne diese Sortierung stand ein Tier auch dann vor einer Hütte,
+      // wenn es eigentlich dahinter läuft.
+      fns.drawEdgeFlora(ctx, t, atmo, windAmt);
 
-      // Ghost-Vorschau (Platzierungsmodus)
+      // --- Tiefensortierung ---
+      // Alles, was auf dem Boden steht, wird nach seiner Standlinie
+      // sortiert gezeichnet: Was weiter unten steht, steht vorn. Vorher
+      // lagen Tiere grundsätzlich über Häusern und über der Spielerin.
+      const entities = [];
+      const player = state.gathering ? null : state.player;
+
+      for (const b of state.placedBuildings || []) {
+        entities.push({
+          y: b.row * TILE_SIZE + TILE_SIZE,
+          draw: () => fns.drawBuildings(ctx, zeroCamera, (x) => x === b),
+        });
+      }
+      for (const tr of state.plantedTrees || []) {
+        entities.push({
+          y: tr.row * TILE_SIZE + TILE_SIZE,
+          draw: () => fns.drawPlantedTrees(ctx, zeroCamera, t, windAmt, (x) => x === tr),
+        });
+      }
+      entities.push({
+        y: TREE_POSITION.row * TILE_SIZE + TILE_SIZE,
+        draw: () => fns.drawGrowingTree(ctx, zeroCamera, t, windAmt),
+      });
+      for (const a of state.animals || []) {
+        entities.push({
+          y: a.y + 10,
+          draw: () => fns.drawAnimals(ctx, zeroCamera, (x) => x === a),
+        });
+      }
+      if (player) {
+        entities.push({
+          y: player.y + 27,
+          draw: () => fns.drawPlayer(ctx, zeroCamera),
+        });
+      }
+
+      // Wandernder Händler — nur an seinen Besuchstagen
+      if (isMerchantHere()) {
+        entities.push({
+          y: MERCHANT_TILE.row * TILE_SIZE + TILE_SIZE,
+          draw: () => {
+            const mx = MERCHANT_TILE.col * TILE_SIZE + TILE_SIZE / 2;
+            const my = MERCHANT_TILE.row * TILE_SIZE + TILE_SIZE - 4;
+            if (atmo) {
+              dropShadow(ctx, mx, my, 40, 20, atmo, 1.3);
+              contactShadow(ctx, mx, my, 32, 10, 0.3);
+            }
+            ctx.drawImage(getMerchantSprite(), mx - M_ANCHOR_X, my - M_ANCHOR_Y);
+            drawMerchantPennants(ctx, mx, my, t);
+            // Hinweiszeichen über dem Stand
+            const bounce = Math.sin(t * 2.4) * 3;
+            ctx.font = 'bold 20px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('💰', mx, my - 96 + bounce);
+          },
+        });
+      }
+
+      entities.sort((a, b) => a.y - b.y);
+      for (const e of entities) e.draw();
+
+      // --- Platzierungsvorschau immer obenauf ---
       fns.drawPlacementGhost(ctx, zeroCamera);
 
-      // Spieler (nur wenn nicht auf Sammelreise)
-      if (!state.gathering) {
-        fns.drawPlayer(ctx, zeroCamera);
+      // --- Lebendige Kleinigkeiten ---
+      // Bei Regen und Schnee bleiben Schmetterlinge im Trockenen.
+      if (!wet && !snowy) {
+        drawMotes(ctx, t, hot ? 52 : 34,
+          Math.max(0, atmo.sunAlt) * 0.4 + atmo.goldenness * 0.35 + (hot ? 0.2 : 0));
+        drawButterflies(ctx, t, 7, Math.max(0, Math.min(1, (atmo.sunAlt - 0.05) * 3)));
       }
+      drawFireflies(ctx, t, 16, Math.max(0, Math.min(1, (-atmo.sunAlt - 0.02) * 4)));
+      // Jahreszeit bestimmt, was durch die Luft segelt:
+      // Herbstlaub dicht, Kirschblüten im Frühling, sonst vereinzelt Grün.
+      const season = atmo.season;
+      let leafMood = 'green';
+      let leafCount = wet ? 10 : 6;
+      if (season < -0.1 && season > -0.85) { leafMood = 'autumn'; leafCount = 22; }
+      else if (season > 0.05 && season < 0.5) { leafMood = 'blossom'; leafCount = 18; }
+      drawFallingLeaves(ctx, t, leafCount, 0.75, leafMood);
 
-      // Besucher-Avatar (Host sieht Besucher)
-      if (vm === 'host') {
-        fns.drawVisitor(ctx, zeroCamera);
-      }
-
-      // Host-Avatar (Besucher sieht Host)
-      if (vm === 'visitor') {
-        fns.drawHostAvatar(ctx, zeroCamera);
-      }
-
-      // Ausgangs-Markierungen (nicht im Besucher-Modus)
-      if (vm !== 'visitor') {
-        fns.drawExitMarkers(ctx, zeroCamera);
-      }
+      if (vm === 'host') fns.drawVisitor(ctx, zeroCamera);
+      if (vm === 'visitor') fns.drawHostAvatar(ctx, zeroCamera);
 
       ctx.restore();
 
-      // Wetter-Overlay (nicht skaliert, läuft über ganzen Viewport)
-      fns.drawWeather(ctx, w, h);
+      // --- Licht, Farbstimmung, Vignette (Bildschirmraum) ---
+      const lights = collectLightsRef.current(state, camera, scale, t);
+      // Laternen von Chronik und Serienweg hängen in Weltkoordinaten
+      for (const cl of chronicleLightsRef.current.concat(lanternLightsRef.current)) {
+        lights.push({
+          x: cl.x * scale + camera.x,
+          y: cl.y * scale + camera.y,
+          radius: cl.radius * scale,
+          color: [255, 186, 96],
+          intensity: cl.intensity,
+        });
+      }
+      applyLighting(ctx, w, h, atmo, lights);
+
+      // --- Wetter liegt über allem ---
+      if (wet) {
+        const heavy = stormy ? 1.45 : 1;
+        drawWetSheen(ctx, w, h, stormy ? 1.25 : 1);
+        drawRain(ctx, t, w, h, heavy, 0.55 + windAmt * 0.5);
+        drawSplashes(ctx, t, w, h, heavy);
+      }
+      if (stormy) {
+        drawLightning(ctx, t, w, h);
+      }
+      if (snowy) {
+        drawSnow(ctx, t, w, h, 1, 0.4 + windAmt * 0.4);
+      }
+      if (foggy) {
+        drawFogBanks(ctx, t, w, h, 1);
+      }
+      if (hot) {
+        // Flimmern: das bereits gezeichnete Bild bandweise verschoben
+        drawHeatHaze(ctx, canvas, t, w, h, dpr);
+      }
+
+      // --- Beschriftungen zuletzt, damit sie immer lesbar bleiben ---
+      if (vm !== 'visitor') {
+        ctx.save();
+        ctx.translate(camera.x, camera.y);
+        ctx.scale(scale, scale);
+        fns.drawExitMarkers(ctx, zeroCamera);
+        ctx.restore();
+      }
 
       animFrame.current = requestAnimationFrame(render);
     };
@@ -2698,6 +1946,7 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
   return (
     <canvas
       ref={canvasRef}
+      data-island="true"
       onClick={handleClick}
       onMouseMove={handleMouseMove}
       style={{

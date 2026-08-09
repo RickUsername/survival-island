@@ -7,13 +7,60 @@ import {
   THIRST_DRAIN_PER_SEC,
   MOOD_DRAIN_PER_SEC,
   SHELTER_MOOD_MODIFIERS,
+  SHELTER_HUNGER_MODIFIERS,
+  SHELTER_THIRST_MODIFIERS,
   WEATHER_TYPES,
+  WET_WEATHER,
   MOOD_GAIN_PER_HOUR,
   RAW_FOOD_EFFICIENCY,
   COOKED_FOOD_EFFICIENCY,
   WATER_COLLECTOR_DURATION,
 } from '../utils/constants';
 import items from '../data/items';
+import { getCozyFactor } from './InteriorSystem';
+
+/**
+ * Wie stark das Wetter an den drei Bedürfnissen zieht — abhängig davon,
+ * was für ein Dach über dem Kopf ist.
+ *
+ * Nass und kalt: die Stimmung leidet stark, der Körper verbraucht mehr
+ * Energie. Ein Steinhaus (Level 5) macht das Wetter praktisch bedeutungslos.
+ * Hitze: der Durst schnellt hoch, Schatten hilft.
+ */
+export function getWeatherModifiers(weather, shelterLevel) {
+  const lvl = Math.max(0, Math.min(5, shelterLevel || 0));
+  const shelterMod = SHELTER_MOOD_MODIFIERS[lvl] || SHELTER_MOOD_MODIFIERS[0];
+
+  const wet = WET_WEATHER.includes(weather);
+  const snowy = weather === WEATHER_TYPES.SNOW;
+  const hot = weather === WEATHER_TYPES.HEAT;
+  const foggy = weather === WEATHER_TYPES.FOG;
+
+  let mood = wet || snowy ? shelterMod.rain : shelterMod.sun;
+  let hunger = 1;
+  let thirst = 1;
+
+  if (wet || snowy) {
+    hunger = SHELTER_HUNGER_MODIFIERS[lvl];
+    // Schnee ist noch zehrender als Regen
+    if (snowy) {
+      hunger = 1 + (hunger - 1) * 1.3;
+      mood = 1 + (mood - 1) * 1.15;
+    }
+    // Gewitter drückt zusätzlich aufs Gemüt
+    if (weather === WEATHER_TYPES.STORM) {
+      mood = 1 + (mood - 1) * 1.25;
+    }
+  } else if (hot) {
+    thirst = SHELTER_THIRST_MODIFIERS[lvl];
+    mood = shelterMod.sun * 1.1;
+  } else if (foggy) {
+    // Nebel ist nur trüb, kein echter Malus
+    mood = shelterMod.sun * 1.08;
+  }
+
+  return { mood, hunger, thirst };
+}
 
 // Prüfen ob der Regenfänger-Tank noch aktiv ist
 export function isWaterCollectorActive(buildings) {
@@ -23,13 +70,13 @@ export function isWaterCollectorActive(buildings) {
   return elapsed < WATER_COLLECTOR_DURATION;
 }
 
-// Regenfänger-Tank aktualisieren (bei Regen füllen)
+// Regenfänger-Tank aktualisieren (bei Niederschlag füllen)
 // Gibt updated buildings zurück
 export function updateWaterCollector(buildings, weather) {
   if (!buildings.hasWaterCollector) return buildings;
 
-  // Bei Regen: Tank füllen (Zeitstempel auf jetzt setzen)
-  if (weather === WEATHER_TYPES.RAINY) {
+  // Bei Regen, Gewitter oder Schnee: Tank füllen
+  if (WET_WEATHER.includes(weather) || weather === WEATHER_TYPES.SNOW) {
     return {
       ...buildings,
       waterCollectorFilledAt: Date.now(),
@@ -48,23 +95,23 @@ export function updateNeeds(gameState, deltaSeconds) {
   const shelterLevel = gameState.buildings.shelterLevel;
   const weather = gameState.weather;
 
-  // Stimmungs-Modifikator berechnen
-  const shelterMod = SHELTER_MOOD_MODIFIERS[shelterLevel] || SHELTER_MOOD_MODIFIERS[0];
-  const moodModifier = weather === WEATHER_TYPES.RAINY ? shelterMod.rain : shelterMod.sun;
+  const mod = getWeatherModifiers(weather, shelterLevel);
+  // Eine eingerichtete Hütte hebt die Laune — bis zu 28 % langsamerer Verlust
+  const cozy = getCozyFactor(gameState);
 
-  // Bedürfnisse reduzieren
-  needs.hunger = Math.max(0, needs.hunger - HUNGER_DRAIN_PER_SEC * deltaSeconds);
+  // Bedürfnisse reduzieren — Wetter und Unterstand wirken auf alle drei
+  needs.hunger = Math.max(0, needs.hunger - HUNGER_DRAIN_PER_SEC * mod.hunger * deltaSeconds);
 
   // Regenfänger: Tank aktiv → kein Durst-Verlust + leichter Anstieg (+5%/Stunde)
   if (isWaterCollectorActive(gameState.buildings)) {
     needs.thirst = Math.min(100, needs.thirst + (5 / 3600) * deltaSeconds);
   } else {
-    needs.thirst = Math.max(0, needs.thirst - THIRST_DRAIN_PER_SEC * deltaSeconds);
+    needs.thirst = Math.max(0, needs.thirst - THIRST_DRAIN_PER_SEC * mod.thirst * deltaSeconds);
   }
 
   // Während aktivem Hobby: Stimmung sinkt nicht (Belohnung kommt am Ende)
   if (!gameState.hobby) {
-    needs.mood = Math.max(0, needs.mood - MOOD_DRAIN_PER_SEC * moodModifier * deltaSeconds);
+    needs.mood = Math.max(0, needs.mood - MOOD_DRAIN_PER_SEC * mod.mood * cozy * deltaSeconds);
   }
 
   return needs;

@@ -6,10 +6,10 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { loadGame, saveGame, getDefaultGameState, resetGame, saveGameWithCloud, loadGameWithCloud, resetGameWithCloud } from '../systems/SaveSystem';
 import { syncDown } from '../systems/CloudSaveService';
 import { useAuth } from '../contexts/AuthContext';
-import { updateNeeds, calculateOfflineNeeds, checkDeath, updateWaterCollector } from '../systems/NeedsSystem';
+import { updateNeeds, calculateOfflineNeeds, checkDeath, updateWaterCollector, getWeatherModifiers } from '../systems/NeedsSystem';
 import { checkWeatherUpdate, getCurrentWeather } from '../systems/WeatherSystem';
 import { checkVacationExpiry, checkAutoVacation } from '../systems/VacationSystem';
-import { SAVE_INTERVAL, TILE_SIZE, COLLISION_TILES, MAP_COLS, MAP_ROWS, FOOD_SPOIL_TIME, TILE_TYPES, HUNGER_DRAIN_PER_SEC, THIRST_DRAIN_PER_SEC, MOOD_DRAIN_PER_SEC, SHELTER_MOOD_MODIFIERS, WEATHER_TYPES } from '../utils/constants';
+import { SAVE_INTERVAL, TILE_SIZE, COLLISION_TILES, MAP_COLS, MAP_ROWS, FOOD_SPOIL_TIME, TILE_TYPES, HUNGER_DRAIN_PER_SEC, THIRST_DRAIN_PER_SEC, MOOD_DRAIN_PER_SEC } from '../utils/constants';
 import { updateAnimals, updateAnimalHunger, checkTreeFruitDrop, checkTreeSeedDrop, checkAnimalSpawn, getRandomGrassPosition, checkChickenEggs } from '../systems/AnimalSystem';
 import { checkEggHatch, createCat, updateCatBehavior, updateCatAffection } from '../systems/CatSystem';
 import { finishGathering, getElapsedGatheringTime, isGatheringComplete } from '../systems/GatheringSystem';
@@ -17,6 +17,8 @@ import { drainToolDurability } from '../systems/ToolSystem';
 import { isWaterCollectorActive } from '../systems/NeedsSystem';
 import homeMap, { EXIT_ZONES, TREE_POSITION } from '../data/homeMap';
 import items from '../data/items';
+import { addItem } from '../systems/InventorySystem';
+import { getCozyFactor } from '../systems/InteriorSystem';
 
 // --- Unkraut-Konstanten ---
 const WEED_SPAWN_INTERVAL = 8 * 60 * 60 * 1000; // Alle 8 Stunden
@@ -197,28 +199,30 @@ export default function useGameLoop() {
         const gatheringSec = Math.min(gatheringElapsed / 1000, totalOfflineSec);
         const afterGatheringSec = Math.max(0, totalOfflineSec - gatheringSec);
 
-        // Hunger/Durst laufen die gesamte Offline-Zeit
+        // Hunger/Durst laufen die gesamte Offline-Zeit — inklusive Wettereinfluss
+        const mod = getWeatherModifiers(state.weather, state.buildings.shelterLevel);
         const needs = { ...state.needs };
-        needs.hunger = Math.max(0, needs.hunger - HUNGER_DRAIN_PER_SEC * totalOfflineSec);
+        needs.hunger = Math.max(0, needs.hunger - HUNGER_DRAIN_PER_SEC * mod.hunger * totalOfflineSec);
         if (isWaterCollectorActive(state.buildings)) {
           needs.thirst = Math.min(100, needs.thirst + (5 / 3600) * totalOfflineSec);
         } else {
-          needs.thirst = Math.max(0, needs.thirst - THIRST_DRAIN_PER_SEC * totalOfflineSec);
+          needs.thirst = Math.max(0, needs.thirst - THIRST_DRAIN_PER_SEC * mod.thirst * totalOfflineSec);
         }
-        // Mood-Drain nur für die Zeit nach der Wanderung
-        const shelterMod = SHELTER_MOOD_MODIFIERS[state.buildings.shelterLevel] || SHELTER_MOOD_MODIFIERS[0];
-        const moodModifier = state.weather === WEATHER_TYPES.RAINY ? shelterMod.rain : shelterMod.sun;
-        needs.mood = Math.max(0, needs.mood - MOOD_DRAIN_PER_SEC * moodModifier * afterGatheringSec);
+        // Mood-Drain nur für die Zeit nach der Wanderung — die eingerichtete
+        // Hütte bremst ihn genauso wie im laufenden Spiel
+        needs.mood = Math.max(0, needs.mood
+          - MOOD_DRAIN_PER_SEC * mod.mood * getCozyFactor(state) * afterGatheringSec);
         state.needs = needs;
       } else if (state.hobby) {
         // Hobby war aktiv: Hunger/Durst laufen normal, Mood pausiert (gleiche Logik wie Sammelreise)
         const totalOfflineSec = (Date.now() - state.lastUpdate) / 1000;
+        const mod = getWeatherModifiers(state.weather, state.buildings.shelterLevel);
         const needs = { ...state.needs };
-        needs.hunger = Math.max(0, needs.hunger - HUNGER_DRAIN_PER_SEC * totalOfflineSec);
+        needs.hunger = Math.max(0, needs.hunger - HUNGER_DRAIN_PER_SEC * mod.hunger * totalOfflineSec);
         if (isWaterCollectorActive(state.buildings)) {
           needs.thirst = Math.min(100, needs.thirst + (5 / 3600) * totalOfflineSec);
         } else {
-          needs.thirst = Math.max(0, needs.thirst - THIRST_DRAIN_PER_SEC * totalOfflineSec);
+          needs.thirst = Math.max(0, needs.thirst - THIRST_DRAIN_PER_SEC * mod.thirst * totalOfflineSec);
         }
         // Mood bleibt unverändert während Hobby
         state.needs = needs;
@@ -248,15 +252,9 @@ export default function useGameLoop() {
         const result = finishGathering(state.gathering, state.tools || []);
 
         // Items ins Inventar
-        const newInventory = { ...state.inventory };
+        let newInventory = state.inventory;
         for (const item of result.items) {
-          if (!newInventory[item.itemId]) {
-            newInventory[item.itemId] = { amount: 0, collectedAt: Date.now() };
-          }
-          newInventory[item.itemId] = {
-            ...newInventory[item.itemId],
-            amount: newInventory[item.itemId].amount + item.amount,
-          };
+          newInventory = addItem(newInventory, item.itemId, item.amount);
         }
         state.inventory = newInventory;
 
@@ -318,15 +316,7 @@ export default function useGameLoop() {
       const { animals: chickenUpdated, eggsLaid } = checkChickenEggs(state.animals);
       state.animals = chickenUpdated;
       if (eggsLaid > 0) {
-        if (!state.inventory) state.inventory = {};
-        if (!state.inventory.chicken_egg) {
-          state.inventory.chicken_egg = { amount: 0, collectedAt: Date.now() };
-        }
-        state.inventory.chicken_egg = {
-          ...state.inventory.chicken_egg,
-          amount: state.inventory.chicken_egg.amount + eggsLaid,
-          collectedAt: Date.now(),
-        };
+        state.inventory = addItem(state.inventory || {}, 'chicken_egg', eggsLaid);
       }
     }
 
@@ -337,14 +327,7 @@ export default function useGameLoop() {
         : Math.max(1, Math.min(10, Math.floor(((Date.now() - (state.stats?.startedAt || Date.now())) / (365 * 24 * 60 * 60 * 1000)) * 10) + 1));
       const fruitDrop = checkTreeFruitDrop(state.lastFruitDrop, treeStage);
       if (fruitDrop > 0) {
-        if (!state.inventory) state.inventory = {};
-        if (!state.inventory.fruit) {
-          state.inventory.fruit = { amount: 0, collectedAt: Date.now() };
-        }
-        state.inventory.fruit = {
-          ...state.inventory.fruit,
-          amount: state.inventory.fruit.amount + fruitDrop,
-        };
+        state.inventory = addItem(state.inventory || {}, 'fruit', fruitDrop);
         state.lastFruitDrop = Date.now();
       }
     }
@@ -428,11 +411,20 @@ export default function useGameLoop() {
       if (!gameStateRef.current || isDead) return;
 
       const now = Date.now();
-      const delta = (now - lastFrameTime.current) / 1000;
+      const rawDelta = (now - lastFrameTime.current) / 1000;
       lastFrameTime.current = now;
 
-      // Schutz: Delta darf nicht negativ oder unrealistisch groß sein
-      if (delta <= 0 || delta > 5) return;
+      // Uhr-Rücksprung (Zeitumstellung, NTP-Korrektur) → Tick verwerfen
+      if (rawDelta <= 0) return;
+
+      // Browser drosseln setInterval in Hintergrund-Tabs auf bis zu einmal
+      // pro Minute. Früher wurde ein solcher Tick komplett verworfen — wer
+      // den Tab nur minimierte, hatte damit unbegrenzt Pause. Jetzt wird die
+      // verstrichene Zeit nachgeholt, aber pro Tick gedeckelt, damit ein
+      // extremer Ausreißer (Standby über Nacht) nicht in einem Schlag tötet.
+      // Sehr lange Abwesenheit rechnet ohnehin calculateOfflineNeeds beim
+      // nächsten Laden korrekt nach.
+      const delta = Math.min(rawDelta, 300);
 
       setGameState(prev => {
         if (!prev || prev.vacation.isActive || isVisitingRef.current) return prev;
@@ -472,16 +464,7 @@ export default function useGameLoop() {
           const { animals: chickenUpdated, eggsLaid } = checkChickenEggs(updated.animals);
           updated.animals = chickenUpdated;
           if (eggsLaid > 0) {
-            const newInventory = { ...updated.inventory };
-            if (!newInventory.chicken_egg) {
-              newInventory.chicken_egg = { amount: 0, collectedAt: Date.now() };
-            }
-            newInventory.chicken_egg = {
-              ...newInventory.chicken_egg,
-              amount: newInventory.chicken_egg.amount + eggsLaid,
-              collectedAt: Date.now(),
-            };
-            updated.inventory = newInventory;
+            updated.inventory = addItem(updated.inventory, 'chicken_egg', eggsLaid);
           }
         }
 
@@ -491,15 +474,7 @@ export default function useGameLoop() {
           : Math.max(1, Math.min(10, Math.floor(((now - (updated.stats?.startedAt || now)) / (365 * 24 * 60 * 60 * 1000)) * 10) + 1));
         const fruitDrop = checkTreeFruitDrop(updated.lastFruitDrop, treeStage);
         if (fruitDrop > 0) {
-          const newInventory = { ...updated.inventory };
-          if (!newInventory.fruit) {
-            newInventory.fruit = { amount: 0, collectedAt: Date.now() };
-          }
-          newInventory.fruit = {
-            ...newInventory.fruit,
-            amount: newInventory.fruit.amount + fruitDrop,
-          };
-          updated.inventory = newInventory;
+          updated.inventory = addItem(updated.inventory, 'fruit', fruitDrop);
           updated.lastFruitDrop = now;
         }
 
@@ -721,15 +696,7 @@ export default function useGameLoop() {
   // Item zum Inventar hinzufügen
   const addToInventory = useCallback((itemId, amount = 1) => {
     setGameState(prev => {
-      const newInventory = { ...prev.inventory };
-      if (!newInventory[itemId]) {
-        newInventory[itemId] = { amount: 0, collectedAt: Date.now() };
-      }
-      newInventory[itemId] = {
-        ...newInventory[itemId],
-        amount: newInventory[itemId].amount + amount,
-      };
-      return { ...prev, inventory: newInventory };
+      return { ...prev, inventory: addItem(prev.inventory, itemId, amount) };
     });
   }, []);
 
