@@ -127,6 +127,11 @@ export function getDefaultGameState() {
     // gehört zum Haus und wird mit ihm abgerissen
     interior: { furniture: [] },
 
+    // Kennung der zuletzt gewährten Urlaubs-Gutschrift (siehe
+    // grantVacationReset). Verhindert, dass dieselbe Gutschrift bei
+    // jedem Laden erneut greift.
+    vacationGrant: null,
+
     // Errungenschaften - überleben den Tod
     achievements: {
       unlockedIds: [],
@@ -134,6 +139,34 @@ export function getDefaultGameState() {
       lastUnlockedAt: null,
     },
   };
+}
+
+// ============================================
+// Einmalige Urlaubs-Gutschrift
+// ============================================
+// Jede Person bekommt ihr Urlaubskonto genau einmal zurückgesetzt — beim
+// nächsten Laden, egal ob lokaler oder Cloud-Spielstand. Die Kennung wird
+// im Spielstand vermerkt, damit die Gutschrift nicht bei jedem Start
+// erneut greift. Für eine spätere Gutschrift genügt eine neue Kennung.
+const VACATION_GRANT_ID = 'reset-2026-08';
+
+/**
+ * Setzt das verbrauchte Urlaubskontingent zurück, falls diese Gutschrift
+ * für den Spielstand noch nicht gewährt wurde.
+ *
+ * Ein gerade laufender Urlaub wird bewusst NICHT beendet: Wer mit
+ * kritischen Bedürfnissen im Urlaub steht, würde sonst mitten im
+ * Spielstand aufwachen. Das Kontingent ist danach wieder voll, die
+ * Stunden des laufenden Urlaubs zählen ab jetzt neu.
+ */
+function grantVacationReset(gs) {
+  if (!gs || gs.vacationGrant === VACATION_GRANT_ID) return false;
+  if (gs.vacation) {
+    gs.vacation.usedHoursThisYear = 0;
+    gs.vacation.currentYear = new Date().getFullYear();
+  }
+  gs.vacationGrant = VACATION_GRANT_ID;
+  return true;
 }
 
 // Prüfen ob localStorage verfügbar ist (iOS Private Mode, Quota etc.)
@@ -199,6 +232,9 @@ export function loadGame(userId) {
       gameState.vacation.usedHoursThisYear = 0;
       gameState.vacation.currentYear = currentYear;
     }
+
+    // Einmalige Urlaubs-Gutschrift
+    grantVacationReset(gameState);
 
     // Migration: Neue Felder für alte Spielstände ergänzen
     if (gameState.buildings && gameState.buildings.waterCollectorFilledAt === undefined) {
@@ -390,6 +426,9 @@ export function resetGame(userId) {
   newState.achievements = achievementsData;
   newState.streak = streakData;
   newState.postcards = postcardData;
+  // Die Gutschrift-Kennung wandert mit: nach dem Tod ist das Konto ohnehin
+  // voll, eine zweite Gutschrift wäre nur Rauschen im Spielstand.
+  newState.vacationGrant = oldState?.vacationGrant || null;
   newState.stats.totalDeaths = totalDeaths;
   // eggReceivedFrom wird zurückgesetzt → nach dem Tod kann man erneut Eier erhalten
 
@@ -477,6 +516,9 @@ function applyMigrations(gameState) {
     gs.vacation.usedHoursThisYear = 0;
     gs.vacation.currentYear = currentYear;
   }
+
+  // Einmalige Urlaubs-Gutschrift
+  grantVacationReset(gs);
 
   // Alle Migrations-Felder ergänzen
   if (gs.buildings && gs.buildings.waterCollectorFilledAt === undefined) {

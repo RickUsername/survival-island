@@ -11,6 +11,7 @@
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { getAtmosphere, applyWeather } from '../render/atmosphere';
 import { applyLighting } from '../render/lighting';
+import { canvasDpr } from '../render/quality';
 import { drawStars } from '../render/particles';
 import { hash2 } from '../render/noise';
 import { rgb, mix } from '../render/color';
@@ -115,7 +116,7 @@ export default function HutInterior({
       const h = size.height;
       if (w < 10 || h < 10) return;
 
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const dpr = canvasDpr();
       if (lastW !== w || lastH !== h || lastDpr !== dpr) {
         canvas.width = Math.round(w * dpr);
         canvas.height = Math.round(h * dpr);

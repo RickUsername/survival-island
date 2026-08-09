@@ -28,6 +28,8 @@ import { getMerchantSprite, drawMerchantPennants, M_ANCHOR_X, M_ANCHOR_Y } from 
 import { getAtmosphere, applyWeather } from '../render/atmosphere';
 import { applyLighting, dropShadow, contactShadow } from '../render/lighting';
 import { windStrength, sway } from '../render/wind';
+import { getWeedSprite, weedVariant, W_ANCHOR_X, W_ANCHOR_Y } from '../render/weedSprites';
+import { canvasDpr } from '../render/quality';
 import {
   drawButterflies, drawFireflies, drawMotes, drawFallingLeaves,
   drawRain, drawSplashes, drawStars, drawWetSheen,
@@ -1248,7 +1250,6 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
       const cx = weed.col * TILE_SIZE + camera.x + TILE_SIZE / 2;
       const cy = weed.row * TILE_SIZE + camera.y + TILE_SIZE / 2 + 10;
       const stage = Math.max(1, Math.min(3, weed.stage || 1));
-      const seed = weed.col * 131 + weed.row * 977;
 
       // Sichtbarer Bodenfleck: hier ist die Wiese verdrängt
       if (stage >= 2) {
@@ -1260,75 +1261,16 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
 
       const bend = sway(cx, cy, t, windAmt, 0.9);
 
-      // Halmzahl und Höhe wachsen mit der Stufe
-      const blades = stage === 1 ? 4 : stage === 2 ? 9 : 16;
-      const maxH = stage === 1 ? 12 : stage === 2 ? 22 : 34;
-      const spread = stage === 1 ? 8 : stage === 2 ? 15 : 24;
-
-      for (let i = 0; i < blades; i++) {
-        const r1 = hash2(seed, i, 11);
-        const r2 = hash2(seed, i, 23);
-        const r3 = hash2(seed, i, 37);
-
-        const bx = cx + (r1 - 0.5) * spread * 2;
-        const by = cy + (r2 - 0.5) * spread * 0.5;
-        const hgt = maxH * (0.55 + r3 * 0.55);
-        // Weiter oben biegt sich der Halm stärker
-        const tipX = bx + bend * (1.2 + hgt / maxH) + (r1 - 0.5) * 5;
-
-        // Kühles, sattes Grün — deutlich anders als das Wiesengrün
-        const g = ctx.createLinearGradient(bx, by, tipX, by - hgt);
-        g.addColorStop(0, '#2c4a16');
-        g.addColorStop(0.6, `rgb(${58 + r2 * 24 | 0},${104 + r3 * 30 | 0},${34 + r1 * 18 | 0})`);
-        g.addColorStop(1, `rgb(${96 + r1 * 40 | 0},${146 + r2 * 34 | 0},${58 + r3 * 24 | 0})`);
-        ctx.strokeStyle = g;
-        ctx.lineWidth = 1.6 + stage * 0.35;
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        ctx.moveTo(bx, by);
-        ctx.quadraticCurveTo(bx + bend * 0.4, by - hgt * 0.55, tipX, by - hgt);
-        ctx.stroke();
-
-        // Blattfahnen am Halm
-        if (stage >= 2 && r3 > 0.45) {
-          const ly = by - hgt * 0.5;
-          const dir = r1 > 0.5 ? 1 : -1;
-          ctx.fillStyle = `rgba(${62 + r2 * 30 | 0},${112 + r3 * 28 | 0},40,0.85)`;
-          ctx.beginPath();
-          ctx.ellipse(bx + dir * 3.4 + bend * 0.3, ly, 4.4, 1.7, dir * 0.5, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-
-      // Stufe 3: Samenstände und Ranken — wucherndes Dickicht
-      if (stage === 3) {
-        for (let i = 0; i < 5; i++) {
-          const r1 = hash2(seed, i, 53);
-          const r2 = hash2(seed, i, 67);
-          const sx = cx + (r1 - 0.5) * spread * 1.8 + bend * 1.6;
-          const sy = cy - maxH * (0.75 + r2 * 0.3);
-          ctx.fillStyle = 'rgba(150,138,74,0.9)';
-          ctx.beginPath();
-          ctx.ellipse(sx, sy, 2, 4.4, bend * 0.06, 0, Math.PI * 2);
-          ctx.fill();
-          // Grannen
-          ctx.strokeStyle = 'rgba(174,164,102,0.7)';
-          ctx.lineWidth = 0.7;
-          for (let k = -1; k <= 1; k++) {
-            ctx.beginPath();
-            ctx.moveTo(sx, sy - 3);
-            ctx.lineTo(sx + k * 3.5, sy - 8);
-            ctx.stroke();
-          }
-        }
-        // Kriechende Ranke am Boden
-        ctx.strokeStyle = 'rgba(64,104,38,0.6)';
-        ctx.lineWidth = 1.4;
-        ctx.beginPath();
-        ctx.moveTo(cx - 20, cy + 3);
-        ctx.quadraticCurveTo(cx, cy + 8, cx + 20, cy + 2);
-        ctx.stroke();
-      }
+      // Gebackenes Büschel blitten. Der Wind wird als Scherung um den
+      // Fußpunkt aufgetragen — die Spitzen neigen sich, der Boden bleibt
+      // stehen. Optisch dasselbe wie das frühere Biegen jedes Halms,
+      // kostet aber ein drawImage statt dutzender Pfade.
+      const sprite = getWeedSprite(stage, weedVariant(weed.col, weed.row));
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.transform(1, 0, -bend * 2.2 / sprite.maxH, 1, 0, 0);
+      ctx.drawImage(sprite.canvas, -W_ANCHOR_X, -W_ANCHOR_Y);
+      ctx.restore();
     }
   }, [gameState]);
 
@@ -1641,7 +1583,7 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
       const h = canvasSize.height;
       // Retina-Auflösung: ohne das ist auf dem Handy alles weichgezeichnet.
       // Auf 2 begrenzt, damit 3x-Displays nicht 9-fache Pixelmenge rendern.
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const dpr = canvasDpr();
 
       if (lastW !== w || lastH !== h || lastDpr !== dpr) {
         canvas.width = Math.round(w * dpr);

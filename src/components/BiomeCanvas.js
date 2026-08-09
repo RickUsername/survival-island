@@ -16,6 +16,7 @@ import {
 } from '../render/treeSprites';
 import { getAtmosphere, applyWeather } from '../render/atmosphere';
 import { applyLighting, dropShadow, contactShadow } from '../render/lighting';
+import { canvasDpr } from '../render/quality';
 import { windStrength, sway } from '../render/wind';
 import {
   drawButterflies, drawFireflies, drawMotes, drawFallingLeaves,
@@ -132,7 +133,7 @@ export default function BiomeCanvas({ direction, weather, timeOverride, canvasSi
       const t = Date.now() / 1000;
       const w = canvasSize.width;
       const h = canvasSize.height;
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const dpr = canvasDpr();
 
       if (lastW !== w || lastH !== h || lastDpr !== dpr) {
         canvas.width = Math.round(w * dpr);

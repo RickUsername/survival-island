@@ -169,47 +169,84 @@ export function applyLighting(ctx, w, h, atmo, lights = []) {
   }
 
   // --- 6. Vignette ---
-  const vig = 0.2 + dark * 0.3;
-  const r0 = Math.min(w, h) * 0.42;
-  const r1 = Math.max(w, h) * 0.78;
-  const v = ctx.createRadialGradient(w / 2, h * 0.48, r0, w / 2, h * 0.5, r1);
-  v.addColorStop(0, 'rgba(0,0,0,0)');
-  v.addColorStop(1, `rgba(6,10,26,${vig})`);
-  ctx.fillStyle = v;
-  ctx.fillRect(0, 0, w, h);
+  // Bei gleicher Größe und Dunkelheit ist das jedes Bild dasselbe Bild.
+  // Einmal backen und blitten ist deutlich billiger als einen Verlauf zu
+  // erzeugen und vollflächig zu rastern.
+  ctx.drawImage(getVignette(w, h, 0.2 + dark * 0.3), 0, 0, w, h);
 }
 
-/**
- * Zeichnet einen weichen Schlagschatten unter ein Objekt.
- * Richtung und Länge kommen aus dem Sonnenstand — morgens fallen
- * die Schatten nach Westen, abends nach Osten.
- */
+let vig = null;
+
+function getVignette(w, h, strength) {
+  // Stärke in Stufen von 0.02 — feiner sieht ohnehin niemand, und so
+  // wird nur bei echtem Tageszeitwechsel neu gebacken.
+  const q = Math.round(strength * 50) / 50;
+  if (vig && vig.w === w && vig.h === h && vig.q === q) return vig.canvas;
+
+  const cv = document.createElement('canvas');
+  cv.width = Math.max(1, Math.round(w));
+  cv.height = Math.max(1, Math.round(h));
+  const c = cv.getContext('2d');
+  const r0 = Math.min(w, h) * 0.42;
+  const r1 = Math.max(w, h) * 0.78;
+  const g = c.createRadialGradient(w / 2, h * 0.48, r0, w / 2, h * 0.5, r1);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, `rgba(6,10,26,${q})`);
+  c.fillStyle = g;
+  c.fillRect(0, 0, w, h);
+
+  vig = { canvas: cv, w, h, q };
+  return cv;
+}
+
+// Weiche Schattenscheiben werden einmal gebacken statt pro Aufruf als
+// Farbverlauf erzeugt. Bei zwei Schatten je Objekt kamen sonst über
+// hundert Gradient-Objekte pro Bild zusammen — der teuerste Posten im
+// ganzen Renderer und der Hauptgrund für Ruckeln auf dem Handy.
+const DISC = 64;   // Radius der gebackenen Scheibe
+const discCache = {};
+
+function shadowDisc(kind) {
+  if (discCache[kind]) return discCache[kind];
+  const cv = document.createElement('canvas');
+  cv.width = DISC * 2;
+  cv.height = DISC * 2;
+  const c = cv.getContext('2d');
+  const g = c.createRadialGradient(DISC, DISC, 0, DISC, DISC, DISC);
+  if (kind === 'drop') {
+    // Verlauf wie zuvor: voll, bei 60 % noch etwas mehr als die Hälfte
+    g.addColorStop(0, 'rgba(18,26,14,1)');
+    g.addColorStop(0.6, 'rgba(18,26,14,0.55)');
+    g.addColorStop(1, 'rgba(18,26,14,0)');
+  } else {
+    g.addColorStop(0, 'rgba(12,20,10,1)');
+    g.addColorStop(1, 'rgba(12,20,10,0)');
+  }
+  c.fillStyle = g;
+  c.fillRect(0, 0, DISC * 2, DISC * 2);
+  discCache[kind] = cv;
+  return cv;
+}
+
 export function dropShadow(ctx, x, y, width, height, atmo, opacityScale = 1) {
   const a = atmo.shadowAlpha * opacityScale;
   if (a <= 0.008) return;
 
   const skew = -atmo.shadowDir * atmo.shadowLength * 0.55;
   ctx.save();
+  ctx.globalAlpha = Math.min(1, a);
   ctx.translate(x, y);
   ctx.transform(1, 0, skew, 0.42, 0, 0);
-  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, width);
-  g.addColorStop(0, `rgba(18,26,14,${a})`);
-  g.addColorStop(0.6, `rgba(18,26,14,${a * 0.55})`);
-  g.addColorStop(1, 'rgba(18,26,14,0)');
-  ctx.fillStyle = g;
-  ctx.beginPath();
-  ctx.ellipse(0, 0, width, height, 0, 0, Math.PI * 2);
-  ctx.fill();
+  // Die Scheibe wird auf die gewünschten Halbachsen gestreckt
+  ctx.drawImage(shadowDisc('drop'), -width, -height, width * 2, height * 2);
   ctx.restore();
 }
 
 /** Kontaktschatten direkt am Boden — hält Objekte „geerdet" */
 export function contactShadow(ctx, x, y, rx, ry, alpha = 0.24) {
-  const g = ctx.createRadialGradient(x, y, 0, x, y, rx);
-  g.addColorStop(0, `rgba(12,20,10,${alpha})`);
-  g.addColorStop(1, 'rgba(12,20,10,0)');
-  ctx.fillStyle = g;
-  ctx.beginPath();
-  ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
-  ctx.fill();
+  if (alpha <= 0.008) return;
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, alpha);
+  ctx.drawImage(shadowDisc('contact'), x - rx, y - ry, rx * 2, ry * 2);
+  ctx.restore();
 }
