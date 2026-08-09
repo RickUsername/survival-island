@@ -12,6 +12,7 @@ import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react'
 import { getAtmosphere, applyWeather } from '../render/atmosphere';
 import { applyLighting } from '../render/lighting';
 import { canvasDpr } from '../render/quality';
+import useTapHandler, { TAPPABLE_CANVAS_STYLE } from '../hooks/useTapHandler';
 import { drawStars } from '../render/particles';
 import { hash2 } from '../render/noise';
 import { rgb, mix } from '../render/color';
@@ -433,7 +434,7 @@ export default function HutInterior({
 
   const handleLeave = useCallback(() => { hoverRef.current = null; }, []);
 
-  const handleClick = useCallback((e) => {
+  const handleTap = useCallback((e) => {
     if (mode !== 'build') return;
     const cell = cellFromEvent(e);
     hoverRef.current = cell;
@@ -477,6 +478,8 @@ export default function HutInterior({
     }
   }, [mode, selected, cellFromEvent, room, onPlace, onRemove]);
 
+  const tapProps = useTapHandler(handleTap);
+
   if (!room) return null;
 
   const slower = Math.round((1 - factor) * 100);
@@ -519,7 +522,7 @@ export default function HutInterior({
           style={{ ...styles.canvas, cursor: mode === 'build' ? 'pointer' : 'default' }}
           onPointerMove={handleMove}
           onPointerLeave={handleLeave}
-          onClick={handleClick}
+          {...tapProps}
         />
         {note && <div style={styles.note}>{note}</div>}
       </div>
@@ -610,7 +613,10 @@ const styles = {
     fontWeight: 'bold', fontSize: '14px', cursor: 'pointer',
   },
   stage: { flex: 1, minHeight: 0, position: 'relative' },
-  canvas: { display: 'block', width: '100%', height: '100%', touchAction: 'manipulation' },
+  canvas: {
+    display: 'block', width: '100%', height: '100%', touchAction: 'manipulation',
+    ...TAPPABLE_CANVAS_STYLE,
+  },
   note: {
     position: 'absolute', left: '50%', bottom: '14px', transform: 'translateX(-50%)',
     background: 'rgba(24,16,10,0.9)', color: '#f0dfbe',

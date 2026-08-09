@@ -17,6 +17,7 @@ import {
 import { getAtmosphere, applyWeather } from '../render/atmosphere';
 import { applyLighting, dropShadow, contactShadow } from '../render/lighting';
 import { canvasDpr } from '../render/quality';
+import useTapHandler, { TAPPABLE_CANVAS_STYLE } from '../hooks/useTapHandler';
 import { windStrength, sway } from '../render/wind';
 import {
   drawButterflies, drawFireflies, drawMotes, drawFallingLeaves,
@@ -293,8 +294,8 @@ export default function BiomeCanvas({ direction, weather, timeOverride, canvasSi
     return () => cancelAnimationFrame(rafRef.current);
   }, [canvasSize, getCamera, map, biome, rows, cols, worldW, worldH, weather, timeOverride]);
 
-  // Klick = hingehen
-  const handleClick = (e) => {
+  // Tippen = hingehen
+  const handleTap = useCallback((e) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
@@ -306,13 +307,18 @@ export default function BiomeCanvas({ direction, weather, timeOverride, canvasSi
     if (c < 0 || r < 0 || c >= cols || r >= rows) return;
     if (COLLISION_TILES.includes(map[r][c])) return;
     targetRef.current = { x: wx, y: wy };
-  };
+  }, [getCamera, cols, rows, map]);
+
+  const tapProps = useTapHandler(handleTap);
 
   return (
     <canvas
       ref={canvasRef}
-      onClick={handleClick}
-      style={{ display: 'block', cursor: 'pointer', touchAction: 'none' }}
+      {...tapProps}
+      style={{
+        display: 'block', cursor: 'pointer', touchAction: 'none',
+        ...TAPPABLE_CANVAS_STYLE,
+      }}
     />
   );
 }

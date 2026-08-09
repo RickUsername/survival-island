@@ -30,6 +30,7 @@ import { applyLighting, dropShadow, contactShadow } from '../render/lighting';
 import { windStrength, sway } from '../render/wind';
 import { getWeedSprite, weedVariant, W_ANCHOR_X, W_ANCHOR_Y } from '../render/weedSprites';
 import { canvasDpr } from '../render/quality';
+import useTapHandler, { TAPPABLE_CANVAS_STYLE } from '../hooks/useTapHandler';
 import {
   drawButterflies, drawFireflies, drawMotes, drawFallingLeaves,
   drawRain, drawSplashes, drawStars, drawWetSheen,
@@ -1801,8 +1802,9 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
     return { worldX, worldY };
   }, [getCameraOffset, getScale]);
 
-  // Klick-Handler
-  const handleClick = useCallback((e) => {
+  // Tipp-/Klick-Handler — wird von useTapHandler aus Pointer-Ereignissen
+  // aufgerufen, nicht aus click. Siehe hooks/useTapHandler.
+  const handleTap = useCallback((e) => {
     const canvas = canvasRef.current;
     if (!canvas || !gameState) return;
 
@@ -1816,6 +1818,8 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
       onMapClick(worldX, worldY);
     }
   }, [gameState, screenToWorld, onMapClick]);
+
+  const tapProps = useTapHandler(handleTap);
 
   // Maus-Bewegung (für Ghost-Vorschau im Platzierungsmodus)
   const handleMouseMove = useCallback((e) => {
@@ -1889,12 +1893,13 @@ export default function GameCanvas({ gameState, onMapClick, onMouseMove, placeme
     <canvas
       ref={canvasRef}
       data-island="true"
-      onClick={handleClick}
+      {...tapProps}
       onMouseMove={handleMouseMove}
       style={{
         display: 'block',
         cursor: placementGhost ? 'crosshair' : 'pointer',
         touchAction: 'none',
+        ...TAPPABLE_CANVAS_STYLE,
       }}
     />
   );

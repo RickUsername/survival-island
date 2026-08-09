@@ -2612,9 +2612,12 @@ const styles = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    padding: '0 8px',
+    // Quer gehaltene Geräte mit Aussparung schieben den Inhalt sonst
+    // unter die Kamera bzw. unter die abgerundete Ecke
+    padding: '0 max(8px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left))',
     zIndex: 10,
     pointerEvents: 'none',
+    gap: '8px',
   },
   topLeft: {
     display: 'flex',
@@ -2656,6 +2659,8 @@ const styles = {
     alignItems: 'center',
     pointerEvents: 'none',
     zIndex: 10,
+    paddingLeft: 'env(safe-area-inset-left)',
+    paddingRight: 'env(safe-area-inset-right)',
   },
   bottomBarToggle: {
     display: 'flex',
@@ -2678,6 +2683,13 @@ const styles = {
     pointerEvents: 'auto',
     marginTop: '2px',
     maxWidth: '100vw',
+    // Auf niedrigen Bildschirmen (Handy quer, kleine Geräte mit
+    // Browserleiste) belegte die ausgeklappte Leiste bis zu zwei Drittel
+    // der Höhe und schob das Spielfeld auf einen Streifen zusammen.
+    // Jetzt bekommt sie höchstens die Hälfte und scrollt darin.
+    maxHeight: '50dvh',
+    overflowY: 'auto',
+    overscrollBehavior: 'contain',
   },
   actionBtn: {
     display: 'flex',
